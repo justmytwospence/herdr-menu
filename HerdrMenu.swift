@@ -30,9 +30,9 @@ let items: [Item] = [
     ("New workspace", "macwindow.badge.plus", "⌃B ⇧N", ["workspace", "create", "--focus"]),
 ]
 
-func run(_ args: [String]) -> (ok: Bool, out: Data, err: String) {
+func run(_ args: [String], exe: String = herdr) -> (ok: Bool, out: Data, err: String) {
     let p = Process(), out = Pipe(), err = Pipe()
-    p.executableURL = URL(fileURLWithPath: herdr)
+    p.executableURL = URL(fileURLWithPath: exe)
     p.arguments = args
     p.standardOutput = out
     p.standardError = err
@@ -48,6 +48,20 @@ func focusedPane() -> String? {
     let json = try? JSONSerialization.jsonObject(with: r.out) as? [String: Any]
     let pane = (json?["result"] as? [String: Any])?["pane"] as? [String: Any]
     return pane?["pane_id"] as? String
+}
+
+// A herdr TUI client is `herdr [--options]` or `herdr session attach <name>`.
+// The long-lived server (`herdr server`) and one-shot CLI calls (`herdr pane ...`) don't count.
+// ponytail: splits on spaces, so a herdr binary whose path contains a space is missed.
+func isHerdrClient(_ command: String) -> Bool {
+    let t = command.split(separator: " ")
+    guard let exe = t.first, exe == "herdr" || exe.hasSuffix("/herdr") else { return false }
+    return t.count == 1 || t[1].hasPrefix("-") || (t[1] == "session" && t.count > 2 && t[2] == "attach")
+}
+
+func herdrClientOpen() -> Bool {
+    String(decoding: run(["-axo", "command="], exe: "/bin/ps").out, as: UTF8.self)
+        .split(separator: "\n").contains { isHerdrClient(String($0)) }
 }
 
 // Icon, title, then keybind right-aligned in grey, like Rectangle.
@@ -99,6 +113,10 @@ class App: NSObject, NSApplicationDelegate {
         quit.attributedTitle = label("Quit", icon: "power", keys: "")
         menu.addItem(quit)
         status.menu = menu
+
+        // Always running (brew services); the icon only shows while a herdr client is open.
+        status.isVisible = herdrClientOpen()
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.status.isVisible = herdrClientOpen() }
     }
 
     @objc func click(_ sender: NSMenuItem) {
@@ -118,6 +136,19 @@ class App: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         a.runModal()
     }
+}
+
+if CommandLine.arguments.contains("--self-test") {
+    precondition(isHerdrClient("herdr"))
+    precondition(isHerdrClient("/Users/me/.local/bin/herdr --session work"))
+    precondition(isHerdrClient("herdr session attach work"))
+    precondition(!isHerdrClient("/Users/me/.local/bin/herdr server"))
+    precondition(!isHerdrClient("herdr pane split --direction right"))
+    precondition(!isHerdrClient("herdr session list"))
+    precondition(!isHerdrClient("/path/herdr-bar --watch-titles 3"))
+    precondition(!isHerdrClient("vim herdr"))
+    print("self-test ok")
+    exit(0)
 }
 
 let app = NSApplication.shared
