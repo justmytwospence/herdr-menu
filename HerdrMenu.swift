@@ -3,7 +3,7 @@ import AppKit
 let herdr = NSHomeDirectory() + "/.local/bin/herdr"
 
 // (title, SF Symbol, herdr keybind, CLI args). nil = separator.
-// "{pane}" is replaced with the focused pane id at click time.
+// "{pane}", "{tab}", "{workspace}" become the focused ids at click time; "{label}" prompts for a name.
 // ponytail: keybinds are herdr's defaults (prefix ctrl+b), not read from config.toml; parse [keys] if I rebind.
 typealias Item = (String, String, String, [String])?
 
@@ -28,6 +28,8 @@ let items: [Item] = [
     nil,
     ("New tab", "plus.rectangle.on.rectangle", "⌃B C", ["tab", "create", "--focus"]),
     ("New workspace", "macwindow.badge.plus", "⌃B ⇧N", ["workspace", "create", "--focus"]),
+    ("Rename tab", "pencil", "⌃B ⇧T", ["tab", "rename", "{tab}", "{label}"]),
+    ("Rename workspace", "square.and.pencil", "⌃B ⇧W", ["workspace", "rename", "{workspace}", "{label}"]),
 ]
 
 func run(_ args: [String], exe: String = herdr) -> (ok: Bool, out: Data, err: String) {
@@ -43,12 +45,13 @@ func run(_ args: [String], exe: String = herdr) -> (ok: Bool, out: Data, err: St
     return (p.terminationStatus == 0, data, msg)
 }
 
-func focusedPane() -> String? {
-    let r = run(["pane", "current"])
-    let json = try? JSONSerialization.jsonObject(with: r.out) as? [String: Any]
-    let pane = (json?["result"] as? [String: Any])?["pane"] as? [String: Any]
-    return pane?["pane_id"] as? String
+// The "result" object of a herdr JSON response.
+func result(_ args: [String]) -> [String: Any]? {
+    let json = try? JSONSerialization.jsonObject(with: run(args).out) as? [String: Any]
+    return json?["result"] as? [String: Any]
 }
+
+let idFields = ["{pane}": "pane_id", "{tab}": "tab_id", "{workspace}": "workspace_id"]
 
 // A herdr TUI client is `herdr [--options]` or `herdr session attach <name>`.
 // The long-lived server (`herdr server`) and one-shot CLI calls (`herdr pane ...`) don't count.
@@ -121,12 +124,34 @@ class App: NSObject, NSApplicationDelegate {
 
     @objc func click(_ sender: NSMenuItem) {
         var args = items[sender.tag]!.3
-        if args.contains("{pane}") {
-            guard let pane = focusedPane() else { return alert("Couldn't find the focused herdr pane.") }
-            args = args.map { $0 == "{pane}" ? pane : $0 }
+        if args.contains(where: idFields.keys.contains) {
+            guard let pane = result(["pane", "current"])?["pane"] as? [String: Any] else {
+                return alert("Couldn't find the focused herdr pane.")
+            }
+            args = args.map { idFields[$0].flatMap { pane[$0] as? String } ?? $0 }
+        }
+        if let i = args.firstIndex(of: "{label}") {
+            // args are [kind, "rename", id, label]; prefill with the current name from `<kind> get <id>`
+            let kind = args[0]
+            let current = (result([kind, "get", args[2]])?[kind] as? [String: Any])?["label"] as? String ?? ""
+            guard let name = prompt("Rename \(kind)", current) else { return }
+            args[i] = name
         }
         let r = run(args)
         if !r.ok { alert(r.err.isEmpty ? "herdr \(args.joined(separator: " ")) failed" : r.err) }
+    }
+
+    func prompt(_ title: String, _ value: String) -> String? {
+        let a = NSAlert()
+        a.messageText = title
+        a.addButton(withTitle: "Rename")
+        a.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: value)
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        a.accessoryView = field
+        a.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        return a.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
     }
 
     func alert(_ text: String) {
