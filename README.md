@@ -1,6 +1,17 @@
-# HerdrMenu
+<p align="center">
+  <img src="logo.png" width="128" alt="herdr's sheep logo">
+</p>
 
-A macOS menu bar app for [herdr](https://herdr.dev), in the style of Rectangle.
+<h1 align="center">HerdrMenu</h1>
+
+<p align="center">A Rectangle-style macOS menu bar app for <a href="https://herdr.dev">herdr</a>.</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
+  <a href="https://herdr.dev"><img src="https://img.shields.io/badge/herdr-0.9.1%2B-94e2d5" alt="herdr 0.9.1+"></a>
+</p>
 
 - **Agents** at the top of the menu, with herdr's status dots. Click one to jump to it.
 - **A badge on the sheep** when an agent needs you: red when one is blocked, teal when one has finished and you haven't looked yet.
@@ -45,6 +56,8 @@ Untick **Launch at login**, choose **Quit**, then delete `~/Applications/HerdrMe
 - Status colours are herdr's Catppuccin palette, its default theme.
 - The app icon is herdr's logo (`logo.png`), and the menu bar icon is the same logo converted to a template image (`sheep.png`).
 
-## Credits
+## Licence
 
-HerdrMenu is an unofficial companion app and isn't affiliated with herdr. The sheep logo comes from [herdrdev/herdr](https://github.com/herdrdev/herdr) (`assets/logo.svg`), licensed under the Apache License 2.0. It's used as the app icon and converted to a monochrome menu bar icon.
+HerdrMenu's code is released under the [MIT License](LICENSE).
+
+HerdrMenu is an unofficial companion app and isn't affiliated with herdr. The sheep logo comes from [herdrdev/herdr](https://github.com/herdrdev/herdr) (`assets/logo.svg`), and `logo.png` and `sheep.png` stay under herdr's [Apache License 2.0](LICENSE-APACHE). It's used as the app icon and converted to a monochrome menu bar icon.
