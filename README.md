@@ -37,6 +37,10 @@ Hover over the sheep to see how many agents are blocked or done. Viewing a finis
 
 ### Several machines
 
+<p align="center">
+  <img src="screenshots/machines.png" width="366" alt="The menu with agents on this Mac and on a saved machine, build-box, each under its own heading">
+</p>
+
 If you've saved SSH machines with `herdr machine add`, the sheep's badge counts agents on all of them. **Machines** chooses how the menu shows them:
 
 - **All together** (default): each enabled machine's agents under their own heading, and every machine's workspaces. The Workspace, Tab and Pane actions act on the machine the herdr TUI is showing, or Local, named in their headers.
