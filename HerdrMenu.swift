@@ -34,10 +34,12 @@ let closePane: Action = ("Close pane", "xmark.square", "⌃B X", ["pane", "close
 let tabActions: [Action] = [
     ("New tab", "plus.rectangle.on.rectangle", "⌃B C", ["tab", "create", "--focus"]),
     ("Rename tab", "pencil", "⌃B ⇧T", ["tab", "rename", "{tab}", "{label}"]),
+    ("Close tab", "xmark.rectangle", "⌃B ⇧X", ["tab", "close", "{tab}"]),
 ]
 let workspaceActions: [Action] = [
     ("New workspace", "macwindow.badge.plus", "⌃B ⇧N", ["workspace", "create", "--focus"]),
     ("Rename workspace", "square.and.pencil", "⌃B ⇧W", ["workspace", "rename", "{workspace}", "{label}"]),
+    ("Close workspace", "rectangle.badge.xmark", "⌃B ⇧D", ["workspace", "close", "{workspace}"]),
 ]
 
 func run(_ args: [String], exe: String = herdr) -> (ok: Bool, out: Data, err: String) {
@@ -208,25 +210,21 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         let snap = result(["api", "snapshot"])?["snapshot"] as? [String: Any]
 
-        menu.addItem(.sectionHeader(title: "Agents"))
-        let spaces = (snap?["workspaces"] as? [[String: Any]] ?? []).reduce(into: [String: String]()) {
-            $0[$1["workspace_id"] as? String ?? ""] = $1["label"] as? String
+        let workspaces = snap?["workspaces"] as? [[String: Any]] ?? []
+        // Workspace and tab ids -> their names (tabs carry a workspace_id too, so tab_id is checked first)
+        let labels = (workspaces + (snap?["tabs"] as? [[String: Any]] ?? [])).reduce(into: [String: String]()) {
+            $0[$1["tab_id"] as? String ?? $1["workspace_id"] as? String ?? ""] = $1["label"] as? String
         }
+
+        // Named like herdr's sidebar: workspace, then the tab in grey
+        menu.addItem(.sectionHeader(title: "Agents"))
         let rank = { (a: [String: Any]) in statusOrder.firstIndex(of: a["agent_status"] as? String ?? "") ?? statusOrder.count }
         let agents = (snap?["agents"] as? [[String: Any]] ?? []).sorted { rank($0) < rank($1) }
         if agents.isEmpty { menu.addItem(NSMenuItem(title: "No agents", action: nil, keyEquivalent: "")) }
         for a in agents {
-            let (icon, tint) = statusIcons[a["agent_status"] as? String ?? ""] ?? unknownIcon
-            let title = short(displayName(a), 26) // keeps the workspace column straight
-            let text = NSMutableAttributedString(attributedString: label(title, icon: icon, keys: "", tint: tint))
-            text.append(NSAttributedString(string: spaces[a["workspace_id"] as? String ?? ""] ?? "",
-                                           attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
-            let mi = NSMenuItem(title: title, action: #selector(focusAgent), keyEquivalent: "")
-            mi.attributedTitle = text
-            mi.representedObject = a["pane_id"]
-            mi.state = a["focused"] as? Bool == true ? .on : .off
-            mi.target = self
-            menu.addItem(mi)
+            menu.addItem(listRow(labels[a["workspace_id"] as? String ?? ""] ?? displayName(a),
+                                 detail: labels[a["tab_id"] as? String ?? ""] ?? displayName(a), from: a,
+                                 args: ["agent", "focus", a["pane_id"] as? String ?? ""]))
         }
         menu.addItem(.separator())
 
@@ -245,7 +243,13 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.sectionHeader(title: "Tab"))
         tabActions.forEach { menu.addItem(item($0)) }
+        menu.addItem(.separator())
+
         menu.addItem(.sectionHeader(title: "Workspace"))
+        for w in workspaces {
+            menu.addItem(listRow(w["label"] as? String ?? "workspace", detail: "", from: w,
+                                 args: ["workspace", "focus", w["workspace_id"] as? String ?? ""]))
+        }
         workspaceActions.forEach { menu.addItem(item($0)) }
         menu.addItem(.separator())
 
@@ -262,10 +266,19 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return mi
     }
 
-    @objc func focusAgent(_ sender: NSMenuItem) {
-        guard let pane = sender.representedObject as? String else { return }
-        let r = run(["agent", "focus", pane])
-        if r.ok { bringTerminalForward() } else { alert(r.err.isEmpty ? "Couldn't focus that agent" : r.err) }
+    // An agent or workspace row: herdr's status dot, name, grey detail, checkmark when focused
+    func listRow(_ title: String, detail: String, from info: [String: Any], args: [String]) -> NSMenuItem {
+        let (icon, tint) = statusIcons[info["agent_status"] as? String ?? ""] ?? unknownIcon
+        let name = short(title, 26) // keeps the detail column straight
+        let text = NSMutableAttributedString(attributedString: label(name, icon: icon, keys: "", tint: tint))
+        text.append(NSAttributedString(string: short(detail, 30),
+                                       attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
+        let mi = NSMenuItem(title: name, action: #selector(click), keyEquivalent: "")
+        mi.attributedTitle = text
+        mi.representedObject = args
+        mi.state = info["focused"] as? Bool == true ? .on : .off
+        mi.target = self
+        return mi
     }
 
     @objc func click(_ sender: NSMenuItem) {
@@ -280,6 +293,15 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if args.starts(with: ["pane", "close"]), let agent = pane["agent"] as? String {
             guard ask("Close this pane?", "\(agent) is running in “\(displayName(pane))”.", button: "Close") else { return }
+        }
+        // Tabs and workspaces always ask: everything inside them closes, agents included
+        if args.count == 3, args[1] == "close", ["tab", "workspace"].contains(args[0]) {
+            let kind = args[0]
+            let info = result([kind, "get", args[2]])?[kind] as? [String: Any] ?? [:]
+            let panes = info["pane_count"] as? Int ?? 0
+            guard ask("Close \(kind) “\(info["label"] as? String ?? kind)”?",
+                      "\(panes) pane\(panes == 1 ? "" : "s") will close, including any agents running in them.",
+                      button: "Close") else { return }
         }
         if let i = args.firstIndex(of: "{label}") {
             // args are [kind, "rename", id, label]; prefill with the current name from `<kind> get <id>`
