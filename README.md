@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/menu.png" width="396" alt="The HerdrMenu menu: agents with status dots, then Pane, Tab and Workspace actions with their herdr keybinds">
+  <img src="screenshots/menu.png" width="396" alt="The HerdrMenu menu: agents with status dots, then Workspace, Tab and Pane actions with their herdr keybinds">
 </p>
 
 - **Agents** at the top of the menu, with herdr's status dots. Click one to jump to it.
