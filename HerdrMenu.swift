@@ -2,33 +2,41 @@ import AppKit
 
 let herdr = NSHomeDirectory() + "/.local/bin/herdr"
 
-// (title, SF Symbol, herdr keybind, CLI args). nil = separator.
+// (title, SF Symbol, herdr keybind, CLI args).
 // "{pane}", "{tab}", "{workspace}" become the focused ids at click time; "{label}" prompts for a name.
 // ponytail: keybinds are herdr's defaults (prefix ctrl+b), not read from config.toml; parse [keys] if I rebind.
-typealias Item = (String, String, String, [String])?
+typealias Action = (title: String, icon: String, keys: String, args: [String])
 
 let dirs = ["left", "right", "up", "down"]
 
-func four(_ verb: String, icons: [String], keys: [String]) -> [Item] {
-    dirs.indices.map { ("\(verb.capitalized) \(dirs[$0])", icons[$0], keys[$0], ["pane", verb, "--direction", dirs[$0]]) } + [nil]
+// The rows of a "Focus ›" style submenu, one per direction
+func four(_ verb: String, icons: [String], keys: [String]) -> [Action] {
+    dirs.indices.map { (dirs[$0].capitalized, icons[$0], keys[$0], ["pane", verb, "--direction", dirs[$0]]) }
 }
 
-let items: [Item] = [
+let paneActions: [Action] = [
     ("Split right", "rectangle.split.2x1", "⌃B V", ["pane", "split", "--direction", "right", "--focus"]),
     ("Split down", "rectangle.split.1x2", "⌃B −", ["pane", "split", "--direction", "down", "--focus"]),
-    nil,
-] + four("focus", icons: ["rectangle.lefthalf.filled", "rectangle.righthalf.filled", "rectangle.tophalf.filled", "rectangle.bottomhalf.filled"],
-         keys: ["⌃B H", "⌃B L", "⌃B K", "⌃B J"])
-  + four("resize", icons: ["arrow.left.to.line", "arrow.right.to.line", "arrow.up.to.line", "arrow.down.to.line"],
-         keys: ["←", "→", "↑", "↓"].map { "⌃B R \($0)" })
-  + four("swap", icons: ["arrow.left.arrow.right", "arrow.left.arrow.right", "arrow.up.arrow.down", "arrow.up.arrow.down"],
-         keys: ["", "", "", ""]) + [
     ("Toggle zoom", "arrow.up.left.and.arrow.down.right", "⌃B Z", ["pane", "zoom", "--toggle"]),
-    ("Close pane", "xmark.square", "⌃B X", ["pane", "close", "{pane}"]),
-    nil,
+]
+let paneSubmenus: [(title: String, icon: String, actions: [Action])] = [
+    ("Focus", "rectangle.lefthalf.inset.filled",
+     four("focus", icons: ["rectangle.lefthalf.filled", "rectangle.righthalf.filled", "rectangle.tophalf.filled", "rectangle.bottomhalf.filled"],
+          keys: ["⌃B H", "⌃B L", "⌃B K", "⌃B J"])),
+    ("Resize", "arrow.up.and.down.and.arrow.left.and.right",
+     four("resize", icons: ["arrow.left.to.line", "arrow.right.to.line", "arrow.up.to.line", "arrow.down.to.line"],
+          keys: ["←", "→", "↑", "↓"].map { "⌃B R \($0)" })),
+    ("Swap", "rectangle.2.swap",
+     four("swap", icons: ["arrow.left.arrow.right", "arrow.left.arrow.right", "arrow.up.arrow.down", "arrow.up.arrow.down"],
+          keys: ["", "", "", ""])),
+]
+let closePane: Action = ("Close pane", "xmark.square", "⌃B X", ["pane", "close", "{pane}"])
+let tabActions: [Action] = [
     ("New tab", "plus.rectangle.on.rectangle", "⌃B C", ["tab", "create", "--focus"]),
-    ("New workspace", "macwindow.badge.plus", "⌃B ⇧N", ["workspace", "create", "--focus"]),
     ("Rename tab", "pencil", "⌃B ⇧T", ["tab", "rename", "{tab}", "{label}"]),
+]
+let workspaceActions: [Action] = [
+    ("New workspace", "macwindow.badge.plus", "⌃B ⇧N", ["workspace", "create", "--focus"]),
     ("Rename workspace", "square.and.pencil", "⌃B ⇧W", ["workspace", "rename", "{workspace}", "{label}"]),
 ]
 
@@ -57,6 +65,18 @@ func agentStatuses() -> [String] {
 
 let idFields = ["{pane}": "pane_id", "{tab}": "tab_id", "{workspace}": "workspace_id"]
 
+// What to call a pane or agent: its terminal title, else the agent, else its folder
+func displayName(_ pane: [String: Any]) -> String {
+    for key in ["terminal_title_stripped", "agent"] {
+        if let s = pane[key] as? String, !s.isEmpty { return s }
+    }
+    return URL(fileURLWithPath: pane["cwd"] as? String ?? "pane").lastPathComponent
+}
+
+func short(_ s: String, _ max: Int) -> String {
+    s.count > max ? s.prefix(max - 1) + "…" : s
+}
+
 // A herdr TUI client is `herdr [--options]` or `herdr session attach <name>`.
 // The long-lived server (`herdr server`) and one-shot CLI calls (`herdr pane ...`) don't count.
 // ponytail: splits on spaces, so a herdr binary whose path contains a space is missed.
@@ -73,7 +93,7 @@ func herdrClientOpen() -> Bool {
 
 // Icon, title, then keybind right-aligned in grey, like Rectangle.
 // The icon lives inside the title text: macOS hides NSMenuItem.image for this app, bundled or not.
-func label(_ title: String, icon: String, keys: String) -> NSAttributedString {
+func label(_ title: String, icon: String, keys: String, tint: NSColor? = nil) -> NSAttributedString {
     let font = NSFont.menuFont(ofSize: 0)
     let para = NSMutableParagraphStyle()
     // icon | title | prefix (right-aligned) | key (left-aligned), so "⌃B" and the keys each form a straight column
@@ -84,8 +104,9 @@ func label(_ title: String, icon: String, keys: String) -> NSAttributedString {
     ]
     let attrs: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: para]
     let att = NSTextAttachment()
-    if let img = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
-        .withSymbolConfiguration(.init(pointSize: font.pointSize, weight: .regular)) {
+    var config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .regular)
+    if let tint { config = config.applying(.init(paletteColors: [tint])) }
+    if let img = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
         att.image = img
         att.bounds = NSRect(x: 0, y: (font.capHeight - img.size.height) / 2, width: img.size.width, height: img.size.height)
     }
@@ -97,7 +118,23 @@ func label(_ title: String, icon: String, keys: String) -> NSAttributedString {
     return s
 }
 
-class App: NSObject, NSApplicationDelegate {
+func hex(_ v: Int) -> NSColor {
+    NSColor(srgbRed: CGFloat(v >> 16 & 0xff) / 255, green: CGFloat(v >> 8 & 0xff) / 255, blue: CGFloat(v & 0xff) / 255, alpha: 1)
+}
+
+// Agent status -> (SF Symbol, colour), matching herdr's sidebar dots (src/client/shell.rs status_icon/status_color).
+// ponytail: Catppuccin Mocha hard-coded, herdr's default theme; read [theme] from config.toml if I switch themes.
+// Blocked sorts first, then done, working, the rest (herdr's status_priority).
+let statusIcons: [String: (String, NSColor)] = [
+    "blocked": ("circlebadge.fill", hex(0xf38ba8)), // red
+    "done": ("circlebadge.fill", hex(0x94e2d5)), // teal
+    "working": ("circlebadge.fill", hex(0xf9e2af)), // yellow
+    "idle": ("circlebadge", hex(0xa6e3a1)), // green
+]
+let unknownIcon = ("circle.dotted", hex(0x6c7086)) // overlay0
+let statusOrder = ["blocked", "done", "working", "idle"]
+
+class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var icon = NSImage(), notched = NSImage()
     let dot = NSView()
@@ -124,33 +161,21 @@ class App: NSObject, NSApplicationDelegate {
         dot.layer?.cornerRadius = dotSize / 2
         status.button?.addSubview(dot)
 
-        let menu = NSMenu()
-        for (i, item) in items.enumerated() {
-            guard let (title, icon, keys, _) = item else { menu.addItem(.separator()); continue }
-            let mi = NSMenuItem(title: title, action: #selector(click), keyEquivalent: "")
-            mi.attributedTitle = label(title, icon: icon, keys: keys)
-            mi.target = self
-            mi.tag = i
-            menu.addItem(mi)
-        }
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate), keyEquivalent: "")
-        quit.attributedTitle = label("Quit", icon: "power", keys: "")
-        menu.addItem(quit)
-        status.menu = menu
+        status.menu = NSMenu()
+        status.menu?.delegate = self
 
         refresh()
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
     // Always running (brew services); the icon only shows while a herdr client is open.
-    // An orange dot means an agent is blocked on me, green means one finished and I haven't looked yet.
+    // A red dot means an agent is blocked on me, teal means one finished and I haven't looked yet.
     func refresh() {
         status.isVisible = herdrClientOpen()
         guard status.isVisible, let button = status.button else { return }
         let statuses = agentStatuses()
         let blocked = statuses.filter { $0 == "blocked" }.count, done = statuses.filter { $0 == "done" }.count
-        let color: NSColor? = blocked > 0 ? .systemOrange : done > 0 ? .systemGreen : nil
+        let color = blocked > 0 ? statusIcons["blocked"]?.1 : done > 0 ? statusIcons["done"]?.1 : nil
         button.image = color == nil ? icon : notched
         dot.isHidden = color == nil
         dot.layer?.backgroundColor = color?.cgColor
@@ -162,36 +187,110 @@ class App: NSObject, NSApplicationDelegate {
         button.toolTip = counts.isEmpty ? "herdr" : "Agents: " + counts.joined(separator: ", ")
     }
 
+    // The whole menu is rebuilt from the live snapshot each time it opens:
+    // Agents / Pane (named after the focused pane) / Tab / Workspace / Quit
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let snap = result(["api", "snapshot"])?["snapshot"] as? [String: Any]
+
+        menu.addItem(.sectionHeader(title: "Agents"))
+        let spaces = (snap?["workspaces"] as? [[String: Any]] ?? []).reduce(into: [String: String]()) {
+            $0[$1["workspace_id"] as? String ?? ""] = $1["label"] as? String
+        }
+        let rank = { (a: [String: Any]) in statusOrder.firstIndex(of: a["agent_status"] as? String ?? "") ?? statusOrder.count }
+        let agents = (snap?["agents"] as? [[String: Any]] ?? []).sorted { rank($0) < rank($1) }
+        if agents.isEmpty { menu.addItem(NSMenuItem(title: "No agents", action: nil, keyEquivalent: "")) }
+        for a in agents {
+            let (icon, tint) = statusIcons[a["agent_status"] as? String ?? ""] ?? unknownIcon
+            let title = short(displayName(a), 26) // keeps the workspace column straight
+            let text = NSMutableAttributedString(attributedString: label(title, icon: icon, keys: "", tint: tint))
+            text.append(NSAttributedString(string: spaces[a["workspace_id"] as? String ?? ""] ?? "",
+                                           attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
+            let mi = NSMenuItem(title: title, action: #selector(focusAgent), keyEquivalent: "")
+            mi.attributedTitle = text
+            mi.representedObject = a["pane_id"]
+            mi.state = a["focused"] as? Bool == true ? .on : .off
+            mi.target = self
+            menu.addItem(mi)
+        }
+        menu.addItem(.separator())
+
+        let focused = (snap?["panes"] as? [[String: Any]] ?? []).first { $0["focused"] as? Bool == true }
+        menu.addItem(.sectionHeader(title: focused.map { "Pane · " + short(displayName($0), 30) } ?? "Pane"))
+        paneActions.forEach { menu.addItem(item($0)) }
+        for sub in paneSubmenus {
+            let mi = NSMenuItem(title: sub.title, action: nil, keyEquivalent: "")
+            mi.attributedTitle = label(sub.title, icon: sub.icon, keys: "")
+            mi.submenu = NSMenu()
+            sub.actions.forEach { mi.submenu?.addItem(item($0)) }
+            menu.addItem(mi)
+        }
+        menu.addItem(item(closePane))
+        menu.addItem(.separator())
+
+        menu.addItem(.sectionHeader(title: "Tab"))
+        tabActions.forEach { menu.addItem(item($0)) }
+        menu.addItem(.sectionHeader(title: "Workspace"))
+        workspaceActions.forEach { menu.addItem(item($0)) }
+        menu.addItem(.separator())
+
+        let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate), keyEquivalent: "")
+        quit.attributedTitle = label("Quit", icon: "power", keys: "")
+        menu.addItem(quit)
+    }
+
+    func item(_ a: Action) -> NSMenuItem {
+        let mi = NSMenuItem(title: a.title, action: #selector(click), keyEquivalent: "")
+        mi.attributedTitle = label(a.title, icon: a.icon, keys: a.keys)
+        mi.representedObject = a.args
+        mi.target = self
+        return mi
+    }
+
+    @objc func focusAgent(_ sender: NSMenuItem) {
+        guard let pane = sender.representedObject as? String else { return }
+        let r = run(["agent", "focus", pane])
+        if !r.ok { alert(r.err.isEmpty ? "Couldn't focus that agent" : r.err) }
+    }
+
     @objc func click(_ sender: NSMenuItem) {
-        var args = items[sender.tag]!.3
+        guard var args = sender.representedObject as? [String] else { return }
+        var pane: [String: Any] = [:]
         if args.contains(where: idFields.keys.contains) {
-            guard let pane = result(["pane", "current"])?["pane"] as? [String: Any] else {
+            guard let p = result(["pane", "current"])?["pane"] as? [String: Any] else {
                 return alert("Couldn't find the focused herdr pane.")
             }
+            pane = p
             args = args.map { idFields[$0].flatMap { pane[$0] as? String } ?? $0 }
+        }
+        if args.starts(with: ["pane", "close"]), let agent = pane["agent"] as? String {
+            guard ask("Close this pane?", "\(agent) is running in “\(displayName(pane))”.", button: "Close") else { return }
         }
         if let i = args.firstIndex(of: "{label}") {
             // args are [kind, "rename", id, label]; prefill with the current name from `<kind> get <id>`
             let kind = args[0]
-            let current = (result([kind, "get", args[2]])?[kind] as? [String: Any])?["label"] as? String ?? ""
-            guard let name = prompt("Rename \(kind)", current) else { return }
-            args[i] = name
+            let field = NSTextField(string: (result([kind, "get", args[2]])?[kind] as? [String: Any])?["label"] as? String ?? "")
+            field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+            guard ask("Rename \(kind)", "", button: "Rename", field: field) else { return }
+            args[i] = field.stringValue
         }
         let r = run(args)
         if !r.ok { alert(r.err.isEmpty ? "herdr \(args.joined(separator: " ")) failed" : r.err) }
     }
 
-    func prompt(_ title: String, _ value: String) -> String? {
+    // A two-button dialog (button / Cancel), optionally with a text field. True if the button was pressed.
+    func ask(_ title: String, _ text: String, button: String, field: NSTextField? = nil) -> Bool {
         let a = NSAlert()
         a.messageText = title
-        a.addButton(withTitle: "Rename")
+        a.informativeText = text
+        a.addButton(withTitle: button)
         a.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: value)
-        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
-        a.accessoryView = field
-        a.window.initialFirstResponder = field
+        if let field {
+            a.accessoryView = field
+            a.window.initialFirstResponder = field
+        }
         NSApp.activate(ignoringOtherApps: true)
-        return a.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+        return a.runModal() == .alertFirstButtonReturn
     }
 
     func alert(_ text: String) {
