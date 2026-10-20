@@ -67,7 +67,7 @@ Untick **Launch at login**, choose **Quit**, then delete `~/Applications/HerdrMe
 ## Notes
 
 - The keybinds shown are your own: the menu reads `~/.config/herdr/config.toml` each time it opens and resolves them the way herdr does (your `prefix` and `[keys]` entries win, and a default that shares a key with one of your bindings, including `[[keys.command]]` keys, is dropped). Bindings must be on one line, e.g. `new_tab = "prefix+t"` or `new_tab = ["prefix+t", "ctrl+alt+t"]`; the first one is shown.
-- `HerdrMenu --demo` shows made-up workspaces and agents instead of yours, with clicks disabled. The screenshots use it: `--open-menu` opens the menu on launch, and `--badge=blocked|done|none --render-badge file.png` draws one of the sheep icons above.
+- The screenshots were made with a demo mode (made-up workspaces and agents) that has since been removed. To retake them, restore it from commit `bb7e941`.
 - Status colours are herdr's Catppuccin palette, its default theme.
 - The app icon is herdr's logo (`logo.png`), and the menu bar icon is the same logo converted to a template image (`sheep.png`).
 

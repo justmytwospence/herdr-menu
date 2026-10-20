@@ -237,30 +237,6 @@ let statusIcons: [String: (String, NSColor)] = [
 let unknownIcon = ("circle.dotted", hex(0x6c7086)) // overlay0
 let statusOrder = ["blocked", "done", "working", "idle"]
 
-// `--demo` shows this made-up session instead of herdr's, for README screenshots: one agent in each state,
-// neutral names, and clicks that do nothing. `--open-menu` opens the menu a second after launch.
-// `--badge=done` or `--badge=none` hides the more urgent states from the icon badge (the menu keeps them all),
-// and `--render-badge <file.png>` draws the icon onto a dark menu-bar tile at 2x and exits.
-let demo = CommandLine.arguments.contains("--demo")
-let demoHiddenFromBadge: Set<String> = switch CommandLine.arguments.first(where: { $0.hasPrefix("--badge=") }) {
-case "--badge=done": ["blocked"]
-case "--badge=none": ["blocked", "done"]
-default: []
-}
-let demoSnapshot: [String: Any] = {
-    let spaces = [("api", "auth refactor", "blocked"), ("website", "landing page copy", "done"),
-                  ("docs", "api reference", "working"), ("infra", "terraform plan", "idle")]
-    var workspaces: [[String: Any]] = [], tabs: [[String: Any]] = [], agents: [[String: Any]] = []
-    for (i, (space, tab, status)) in spaces.enumerated() {
-        let w = "w\(i + 1)", focused = space == "docs"
-        workspaces.append(["workspace_id": w, "label": space, "agent_status": status, "focused": focused])
-        tabs.append(["tab_id": "\(w):t1", "workspace_id": w, "label": tab])
-        agents.append(["pane_id": "\(w):p1", "tab_id": "\(w):t1", "workspace_id": w, "agent": "claude",
-                       "agent_status": status, "terminal_title_stripped": tab, "focused": focused])
-    }
-    return ["workspaces": workspaces, "tabs": tabs, "agents": agents, "panes": agents]
-}()
-
 class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var icon = NSImage(), notched = NSImage()
@@ -293,24 +269,15 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         status.menu?.delegate = self
 
         refresh()
-        if demo, let i = CommandLine.arguments.firstIndex(of: "--render-badge"), i + 1 < CommandLine.arguments.count {
-            renderBadge(to: CommandLine.arguments[i + 1])
-            exit(0)
-        }
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
-        if CommandLine.arguments.contains("--open-menu") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.status.button?.performClick(nil) }
-        }
     }
 
-    // Always running (brew services); the icon only shows while a herdr client is open.
+    // Always running (a login item); the icon only shows while a herdr client is open.
     // A red dot means an agent is blocked on me, teal means one finished and I haven't looked yet.
     func refresh() {
-        status.isVisible = demo || herdrClientPID() != nil
+        status.isVisible = herdrClientPID() != nil
         guard status.isVisible, let button = status.button else { return }
-        let statuses = demo
-            ? (demoSnapshot["agents"] as! [[String: Any]]).map { $0["agent_status"] as! String }.filter { !demoHiddenFromBadge.contains($0) }
-            : agentStatuses()
+        let statuses = agentStatuses()
         let blocked = statuses.filter { $0 == "blocked" }.count, done = statuses.filter { $0 == "done" }.count
         let color = blocked > 0 ? statusIcons["blocked"]?.1 : done > 0 ? statusIcons["done"]?.1 : nil
         button.image = color == nil ? icon : notched
@@ -324,42 +291,13 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.toolTip = counts.isEmpty ? "herdr" : "Agents: " + counts.joined(separator: ", ")
     }
 
-    // For the README: the current icon as the menu bar draws it on a dark bar (white sheep, coloured dot),
-    // so it doesn't depend on the icon fitting in my menu bar right now.
-    func renderBadge(to path: String) {
-        let size = NSSize(width: 44, height: 28)
-        let sheep = dot.isHidden ? icon : notched
-        let white = NSImage(size: sheep.size, flipped: false) { r in
-            sheep.draw(in: r)
-            NSColor.white.set()
-            r.fill(using: .sourceAtop)
-            return true
-        }
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width) * 2, pixelsHigh: Int(size.height) * 2,
-                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        rep.size = size
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        NSColor(white: 0.17, alpha: 1).setFill()
-        NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 7, yRadius: 7).fill()
-        let at = NSRect(x: (size.width - iconSize) / 2, y: (size.height - iconSize) / 2, width: iconSize, height: iconSize)
-        white.draw(in: at)
-        if !dot.isHidden, let color = dot.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)) {
-            color.setFill()
-            NSBezierPath(ovalIn: NSRect(x: at.maxX - dotSize, y: at.minY, width: dotSize, height: dotSize)).fill()
-        }
-        NSGraphicsContext.restoreGraphicsState()
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-    }
-
     // The whole menu is rebuilt from the live snapshot each time it opens:
     // Agents / Pane (named after the focused pane) / Tab / Workspace / Quit
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        // Demo screenshots use herdr's defaults; otherwise reread my config so edits show up straight away
-        keybinds = Keybinds(toml: demo ? "" : (try? String(contentsOfFile: herdrConfig, encoding: .utf8)) ?? "")
-        let snap = demo ? demoSnapshot : result(["api", "snapshot"])?["snapshot"] as? [String: Any]
+        // Reread my config so edits show up straight away
+        keybinds = Keybinds(toml: (try? String(contentsOfFile: herdrConfig, encoding: .utf8)) ?? "")
+        let snap = result(["api", "snapshot"])?["snapshot"] as? [String: Any]
 
         let workspaces = snap?["workspaces"] as? [[String: Any]] ?? []
         // Workspace and tab ids -> their names (tabs carry a workspace_id too, so tab_id is checked first)
@@ -440,7 +378,6 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // A macOS login item (System Settings → General → Login Items), so the app starts at login.
     // It stays hidden until a herdr client is open, like any other time.
     @objc func toggleLaunchAtLogin() {
-        guard !demo else { return }
         let service = SMAppService.mainApp
         do {
             if service.status == .enabled { try service.unregister() } else { try service.register() }
@@ -451,7 +388,6 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func click(_ sender: NSMenuItem) {
-        guard !demo else { return }
         guard var args = sender.representedObject as? [String] else { return }
         var pane: [String: Any] = [:]
         if args.contains(where: idFields.keys.contains) {
