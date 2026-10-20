@@ -18,11 +18,21 @@
 </p>
 
 - **Agents** at the top of the menu, with herdr's status dots. Click one to jump to it.
-- **A badge on the sheep** <img src="screenshots/badge.png" height="20" alt="The sheep menu bar icon with a red badge"> when an agent needs you: red when one is blocked, teal when one has finished and you haven't looked yet.
+- **A badge on the sheep** when an agent needs you (see [the sheep](#the-sheep) below).
 - **One-click actions** for panes (split, zoom, focus, resize, swap, close), tabs and workspaces (new, rename, close), plus a list of your workspaces to jump between.
 - **herdr's keybind next to each action,** so the menu doubles as a cheat sheet.
 
 It calls the `herdr` CLI rather than faking keystrokes, so it acts on whichever pane you're looking at and doesn't need Accessibility permission. After a click, it brings your terminal to the front. The icon only appears while herdr is open.
+
+### The sheep
+
+| Icon | What it means |
+|:---:|---|
+| <img src="screenshots/badge-none.png" width="44" alt="The plain sheep icon"> | herdr is open and no agent needs you |
+| <img src="screenshots/badge-blocked.png" width="44" alt="The sheep with a red badge"> | An agent is blocked, waiting on you (for example, for an approval) |
+| <img src="screenshots/badge-done.png" width="44" alt="The sheep with a teal badge"> | An agent has finished and you haven't looked at it yet |
+
+Hover over the sheep to see how many agents are blocked or done. Viewing a finished agent in herdr clears its badge.
 
 ## Requirements
 
@@ -57,7 +67,7 @@ Untick **Launch at login**, choose **Quit**, then delete `~/Applications/HerdrMe
 ## Notes
 
 - The keybinds shown are your own: the menu reads `~/.config/herdr/config.toml` each time it opens and resolves them the way herdr does (your `prefix` and `[keys]` entries win, and a default that shares a key with one of your bindings, including `[[keys.command]]` keys, is dropped). Bindings must be on one line, e.g. `new_tab = "prefix+t"` or `new_tab = ["prefix+t", "ctrl+alt+t"]`; the first one is shown.
-- `HerdrMenu --demo` shows made-up workspaces and agents instead of yours, with clicks disabled. The screenshots use it; add `--open-menu` to open the menu on launch.
+- `HerdrMenu --demo` shows made-up workspaces and agents instead of yours, with clicks disabled. The screenshots use it: `--open-menu` opens the menu on launch, and `--badge=blocked|done|none --render-badge file.png` draws one of the sheep icons above.
 - Status colours are herdr's Catppuccin palette, its default theme.
 - The app icon is herdr's logo (`logo.png`), and the menu bar icon is the same logo converted to a template image (`sheep.png`).
 
