@@ -449,11 +449,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Then biggest to smallest, like herdr: workspace, tab, pane. Each header names the focused one,
         // which is where its actions land.
         let pane = snap?.panes.first { $0.focused == true }
+        // No workspace list: the agent rows above already name each workspace and jump to it
         menu.addItem(header("Workspace", pane.flatMap { n[$0.workspaceId] }))
-        for w in snap?.workspaces ?? [] {
-            menu.addItem(listRow(w.label, detail: "", status: w.agentStatus, focused: w.focused,
-                                 command: Command(machine: target, args: ["workspace", "focus", w.workspaceId])))
-        }
         add(workspaceActions, to: menu, on: target)
         menu.addItem(.separator())
 
