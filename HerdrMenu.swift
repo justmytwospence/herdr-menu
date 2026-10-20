@@ -51,6 +51,10 @@ func result(_ args: [String]) -> [String: Any]? {
     return json?["result"] as? [String: Any]
 }
 
+func agentStatuses() -> [String] {
+    (result(["agent", "list"])?["agents"] as? [[String: Any]] ?? []).compactMap { $0["agent_status"] as? String }
+}
+
 let idFields = ["{pane}": "pane_id", "{tab}": "tab_id", "{workspace}": "workspace_id"]
 
 // A herdr TUI client is `herdr [--options]` or `herdr session attach <name>`.
@@ -94,7 +98,7 @@ func label(_ title: String, icon: String, keys: String) -> NSAttributedString {
 }
 
 class App: NSObject, NSApplicationDelegate {
-    let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
     func applicationDidFinishLaunching(_: Notification) {
         let sheep = Bundle.main.image(forResource: "sheep")
@@ -117,9 +121,23 @@ class App: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
         status.menu = menu
 
-        // Always running (brew services); the icon only shows while a herdr client is open.
+        status.button?.imagePosition = .imageLeft
+        refresh()
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+
+    // Always running (brew services); the icon only shows while a herdr client is open.
+    // An orange dot means an agent is blocked on me, green means one finished and I haven't looked yet.
+    func refresh() {
         status.isVisible = herdrClientOpen()
-        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.status.isVisible = herdrClientOpen() }
+        guard status.isVisible, let button = status.button else { return }
+        let statuses = agentStatuses()
+        let blocked = statuses.filter { $0 == "blocked" }.count, done = statuses.filter { $0 == "done" }.count
+        let color: NSColor? = blocked > 0 ? .systemOrange : done > 0 ? .systemGreen : nil
+        button.attributedTitle = NSAttributedString(string: color == nil ? "" : "●",
+                                                    attributes: [.foregroundColor: color ?? .clear, .font: NSFont.systemFont(ofSize: 9)])
+        let counts = [(blocked, "blocked"), (done, "done")].filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
+        button.toolTip = counts.isEmpty ? "herdr" : "Agents: " + counts.joined(separator: ", ")
     }
 
     @objc func click(_ sender: NSMenuItem) {
