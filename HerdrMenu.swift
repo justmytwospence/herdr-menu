@@ -98,13 +98,31 @@ func label(_ title: String, icon: String, keys: String) -> NSAttributedString {
 }
 
 class App: NSObject, NSApplicationDelegate {
-    let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    var icon = NSImage(), notched = NSImage()
+    let dot = NSView()
+
+    // The status badge: a 7pt dot in an 11pt notch cut from the icon's bottom-right corner.
+    // The icon stays a template image (macOS tints it for light/dark); only the dot is coloured.
+    let iconSize: CGFloat = 18, dotSize: CGFloat = 7, notchSize: CGFloat = 11
 
     func applicationDidFinishLaunching(_: Notification) {
-        let sheep = Bundle.main.image(forResource: "sheep")
-        sheep?.size = NSSize(width: 18, height: 18)
-        sheep?.isTemplate = true
-        status.button?.image = sheep ?? NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: "herdr")
+        icon = Bundle.main.image(forResource: "sheep")
+            ?? NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: "herdr")!
+        icon.size = NSSize(width: iconSize, height: iconSize)
+        icon.isTemplate = true
+        notched = NSImage(size: icon.size, flipped: false) { [icon, iconSize, dotSize, notchSize] r in
+            icon.draw(in: r)
+            let c = iconSize - dotSize / 2
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            NSBezierPath(ovalIn: NSRect(x: c - notchSize / 2, y: dotSize / 2 - notchSize / 2, width: notchSize, height: notchSize)).fill()
+            return true
+        }
+        notched.isTemplate = true
+        status.button?.image = icon
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = dotSize / 2
+        status.button?.addSubview(dot)
 
         let menu = NSMenu()
         for (i, item) in items.enumerated() {
@@ -121,7 +139,6 @@ class App: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
         status.menu = menu
 
-        status.button?.imagePosition = .imageLeft
         refresh()
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
     }
@@ -134,8 +151,13 @@ class App: NSObject, NSApplicationDelegate {
         let statuses = agentStatuses()
         let blocked = statuses.filter { $0 == "blocked" }.count, done = statuses.filter { $0 == "done" }.count
         let color: NSColor? = blocked > 0 ? .systemOrange : done > 0 ? .systemGreen : nil
-        button.attributedTitle = NSAttributedString(string: color == nil ? "" : "●",
-                                                    attributes: [.foregroundColor: color ?? .clear, .font: NSFont.systemFont(ofSize: 9)])
+        button.image = color == nil ? icon : notched
+        dot.isHidden = color == nil
+        dot.layer?.backgroundColor = color?.cgColor
+        // Same spot as the notch: the icon's bottom-right corner, wherever the button centres it
+        let x0 = (button.bounds.width - iconSize) / 2, y0 = (button.bounds.height - iconSize) / 2
+        dot.frame = NSRect(x: x0 + iconSize - dotSize, y: button.isFlipped ? y0 + iconSize - dotSize : y0,
+                           width: dotSize, height: dotSize)
         let counts = [(blocked, "blocked"), (done, "done")].filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
         button.toolTip = counts.isEmpty ? "herdr" : "Agents: " + counts.joined(separator: ", ")
     }
