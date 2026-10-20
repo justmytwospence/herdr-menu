@@ -37,9 +37,21 @@ Hover over the sheep to see how many agents are blocked or done. Viewing a finis
 
 ### Several machines
 
-If you've saved SSH machines with `herdr machine add`, the menu lists each enabled machine's agents under its own heading, and the sheep's badge counts them all. A **Machine** section picks which machine the Workspace, Tab and Pane actions act on. By default that's the machine the herdr TUI is showing, or Local. Everything goes through `herdr --machine <id> ...`, so it needs herdr 0.9.5 or later on both ends. A machine that doesn't answer within 3 seconds shows as *Not reachable*.
+If you've saved SSH machines with `herdr machine add`, the sheep's badge counts agents on all of them. **Machines** chooses how the menu shows them:
+
+- **All together** (default): each enabled machine's agents under their own heading, and every machine's workspaces. The Workspace, Tab and Pane actions act on the machine the herdr TUI is showing, or Local, named in their headers.
+- **One at a time**: a **Machine** section at the top picks one machine, and the rest of the menu shows and acts on just that one.
+
+Everything goes through `herdr --machine <id> ...`, so it needs herdr 0.9.5 or later on both ends. A machine that doesn't answer within 3 seconds shows as *Not reachable*.
 
 Clicking a remote agent moves focus on that machine's server. You only see it if your TUI is showing that machine, because the CLI can't switch the TUI's machine for you.
+
+### Settings
+
+- **Show**: agents and workspaces (default), agents only, or workspaces only.
+- **Machines**: all together or one at a time (only with saved SSH machines).
+
+Both are stored in the app's defaults, e.g. `defaults write dev.pierre-charles.herdr-menu show agents`.
 
 ## Requirements
 

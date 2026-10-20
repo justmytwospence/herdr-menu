@@ -317,6 +317,21 @@ func rank(_ status: String?) -> Int {
     statusStyles.firstIndex { $0.status == status } ?? statusStyles.count
 }
 
+// MARK: - Settings
+
+// Menu choices, stored in UserDefaults (`defaults write dev.pierre-charles.herdr-menu show agents` works too).
+// The first choice is the default.
+enum Setting {
+    static let show = "show", machines = "machines"
+    static let showChoices: [(value: String, title: String)] = [(value: "both", title: "Agents and workspaces"), ("agents", "Agents only"), ("workspaces", "Workspaces only")]
+    static let machineChoices: [(value: String, title: String)] = [(value: "all", title: "All together"), ("one", "One at a time")]
+    static let defaults = [show: showChoices[0].value, machines: machineChoices[0].value]
+}
+
+func setting(_ key: String) -> String {
+    UserDefaults.standard.string(forKey: key) ?? Setting.defaults[key] ?? ""
+}
+
 // MARK: - App
 
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -332,7 +347,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var picked: Machine?
     var refreshing = false
     var target: Machine {
-        [picked, tuiSelected].compactMap { $0 }.first(where: machines.contains) ?? .local
+        let pick = setting(Setting.machines) == "one" ? picked : nil
+        return [pick, tuiSelected].compactMap { $0 }.first(where: machines.contains) ?? .local
     }
 
     // The status badge: a 7pt dot in an 11pt notch cut from the icon's bottom-right corner.
@@ -406,16 +422,31 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Reread my config so edits show up straight away
         let config = NSHomeDirectory() + "/.config/herdr/config.toml"
         keybinds = Keybinds(toml: (try? String(contentsOfFile: config, encoding: .utf8)) ?? "")
-        // Every machine at once; a remote one that doesn't answer in time shows as unreachable
+        // Every machine at once; a remote one that doesn't answer in time shows as unreachable.
+        // "One at a time" shows just the target machine, with a picker to switch.
         let all = machines, multi = all.count > 1, target = target
-        let snaps = fetch(all, ["api", "snapshot"]).map { $0?.snapshot }
+        let together = !multi || setting(Setting.machines) == "all"
+        let shown = together ? all : [target]
+        let snaps = fetch(shown, ["api", "snapshot"]).map { $0?.snapshot }
+        let list = setting(Setting.show)
         func names(_ snap: Snapshot?) -> [String: String] {
             Dictionary(((snap?.workspaces ?? []) + (snap?.tabs ?? [])).map { ($0.tabId ?? $0.workspaceId, $0.label) }) { first, _ in first }
         }
 
-        // Named like herdr's sidebar: workspace, then the tab in grey. One section per machine when there are several.
-        for (m, snap) in zip(all, snaps) {
-            menu.addItem(.sectionHeader(title: multi ? "Agents · \(m.name)" : "Agents"))
+        if !together {
+            menu.addItem(header("Machine", target.name))
+            for (i, m) in all.enumerated() {
+                let mi = menuItem(m.name, icon: m.id == nil ? "laptopcomputer" : "server.rack", action: #selector(pick(_:)))
+                mi.representedObject = i
+                mi.state = m == target ? .on : .off
+                menu.addItem(mi)
+            }
+            menu.addItem(.separator())
+        }
+
+        // Named like herdr's sidebar: workspace, then the tab in grey. One section per machine when showing several.
+        for (m, snap) in zip(shown, snaps) where list != "workspaces" {
+            menu.addItem(.sectionHeader(title: shown.count > 1 ? "Agents · \(m.name)" : "Agents"))
             let n = names(snap)
             let agents = (snap?.agents ?? []).sorted { rank($0.agentStatus) < rank($1.agentStatus) }
             if agents.isEmpty {
@@ -429,36 +460,30 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                      command: Command(machine: m, args: ["agent", "focus", a.paneId])))
             }
         }
-        menu.addItem(.separator())
-
-        // Which machine the Workspace / Tab / Pane actions below act on
-        if multi {
-            menu.addItem(header("Machine", target.name))
-            for (i, m) in all.enumerated() {
-                let mi = menuItem(m.name, icon: m.id == nil ? "laptopcomputer" : "server.rack", action: #selector(pick(_:)))
-                mi.representedObject = i
-                mi.state = m == target ? .on : .off
-                if snaps[i] == nil { mi.isEnabled = false }
-                menu.addItem(mi)
-            }
-            menu.addItem(.separator())
-        }
-        let snap = all.firstIndex(of: target).flatMap { snaps[$0] }
-        let n = names(snap)
+        if list != "workspaces" { menu.addItem(.separator()) }
 
         // Then biggest to smallest, like herdr: workspace, tab, pane. Each header names the focused one,
-        // which is where its actions land.
+        // which is where its actions land: the target machine (with every machine shown, the one the TUI shows).
+        let snap = shown.firstIndex(of: target).flatMap { snaps[$0] }
+        let n = names(snap)
         let pane = snap?.panes.first { $0.focused == true }
-        // No workspace list: the agent rows above already name each workspace and jump to it
-        menu.addItem(header("Workspace", pane.flatMap { n[$0.workspaceId] }))
+        let on = shown.count > 1 ? " (\(target.name))" : ""
+        menu.addItem(header("Workspace", pane.flatMap { n[$0.workspaceId] }.map { $0 + on }))
+        // Workspace rows for every machine shown, the machine in grey when there are several
+        for (m, snap) in zip(shown, snaps) where list != "agents" {
+            for w in snap?.workspaces ?? [] {
+                menu.addItem(listRow(w.label, detail: shown.count > 1 ? m.name : "", status: w.agentStatus, focused: w.focused,
+                                     command: Command(machine: m, args: ["workspace", "focus", w.workspaceId])))
+            }
+        }
         add(workspaceActions, to: menu, on: target)
         menu.addItem(.separator())
 
-        menu.addItem(header("Tab", pane.flatMap { n[$0.tabId] }))
+        menu.addItem(header("Tab", pane.flatMap { n[$0.tabId] }.map { $0 + on }))
         add(tabActions, to: menu, on: target)
         menu.addItem(.separator())
 
-        menu.addItem(header("Pane", pane.map(displayName)))
+        menu.addItem(header("Pane", pane.map { displayName($0) + on }))
         add(paneActions, to: menu, on: target)
         for sub in paneSubmenus {
             let mi = menuItem(sub.title, icon: sub.icon, action: nil)
@@ -469,6 +494,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item(closePane, on: target))
         menu.addItem(.separator())
 
+        // Settings, kept in UserDefaults; Machines only matters with saved SSH machines
+        menu.addItem(settingMenu("Show", icon: "list.bullet", key: Setting.show, choices: Setting.showChoices))
+        if multi {
+            menu.addItem(settingMenu("Machines", icon: "server.rack", key: Setting.machines, choices: Setting.machineChoices))
+        }
         let login = menuItem("Launch at login", icon: "sunrise", action: #selector(toggleLaunchAtLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
@@ -530,6 +560,25 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert("Couldn't change Launch at login: \(error.localizedDescription)")
         }
         if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+    }
+
+    // A submenu of radio choices for one setting
+    func settingMenu(_ title: String, icon: String, key: String, choices: [(value: String, title: String)]) -> NSMenuItem {
+        let mi = menuItem(title, icon: icon, action: nil)
+        mi.submenu = NSMenu()
+        for c in choices {
+            let row = NSMenuItem(title: c.title, action: #selector(choose(_:)), keyEquivalent: "")
+            row.target = self
+            row.representedObject = [key, c.value]
+            row.state = setting(key) == c.value ? .on : .off
+            mi.submenu?.addItem(row)
+        }
+        return mi
+    }
+
+    @objc func choose(_ sender: NSMenuItem) {
+        guard let kv = sender.representedObject as? [String] else { return }
+        UserDefaults.standard.set(kv[1], forKey: kv[0])
     }
 
     @objc func pick(_ sender: NSMenuItem) {
