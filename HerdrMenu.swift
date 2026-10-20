@@ -148,6 +148,7 @@ func run(_ args: [String], exe: String = herdr, timeout: TimeInterval? = nil) ->
 struct Pane: Decodable { // also an agent: agents are panes with an agent in them
     let paneId, tabId, workspaceId: String
     let agent, agentStatus, terminalTitleStripped, cwd: String?
+    let title: String? // the agent's task, when it reports one (pi does)
     let focused: Bool?
 }
 struct Group: Decodable { // a workspace, or a tab when tabId is set
@@ -421,7 +422,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 menu.addItem(NSMenuItem(title: snap == nil && m.id != nil ? "Not reachable" : "No agents", action: nil, keyEquivalent: ""))
             }
             for a in agents {
-                menu.addItem(listRow(n[a.workspaceId] ?? displayName(a), detail: n[a.tabId] ?? displayName(a),
+                // Detail: the agent's task, which tells apart several agents in one repo; else the tab
+                let task = a.title.flatMap { $0.isEmpty ? nil : $0 }
+                menu.addItem(listRow(n[a.workspaceId] ?? displayName(a), detail: task ?? n[a.tabId] ?? displayName(a),
                                      status: a.agentStatus, focused: a.focused,
                                      command: Command(machine: m, args: ["agent", "focus", a.paneId])))
             }
@@ -654,6 +657,7 @@ if CommandLine.arguments.contains("--self-test") {
     let snap = try! decoder.decode(Response.self, from: Data(sample.utf8)).result.snapshot!
     precondition(snap.workspaces[0].label == "api" && snap.workspaces[0].tabId == nil && snap.tabs[0].paneCount == 2)
     precondition(snap.agents[0].agentStatus == "blocked" && displayName(snap.agents[0]) == "claude")
+    precondition(snap.agents[0].title == nil) // absent for agents that don't report a task
     precondition(displayName(snap.panes[0]) == "site") // empty title falls back to the folder
     precondition(rank("blocked") < rank("idle") && rank("idle") < rank(nil))
     print("self-test ok")
