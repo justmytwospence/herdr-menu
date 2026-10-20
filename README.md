@@ -13,8 +13,12 @@
   <a href="https://herdr.dev"><img src="https://img.shields.io/badge/herdr-0.9.1%2B-94e2d5" alt="herdr 0.9.1+"></a>
 </p>
 
+<p align="center">
+  <img src="screenshots/menu.png" width="396" alt="The HerdrMenu menu: agents with status dots, then Pane, Tab and Workspace actions with their herdr keybinds">
+</p>
+
 - **Agents** at the top of the menu, with herdr's status dots. Click one to jump to it.
-- **A badge on the sheep** when an agent needs you: red when one is blocked, teal when one has finished and you haven't looked yet.
+- **A badge on the sheep** <img src="screenshots/badge.png" height="20" alt="The sheep menu bar icon with a red badge"> when an agent needs you: red when one is blocked, teal when one has finished and you haven't looked yet.
 - **One-click actions** for panes (split, zoom, focus, resize, swap, close), tabs and workspaces (new, rename, close), plus a list of your workspaces to jump between.
 - **herdr's keybind next to each action,** so the menu doubles as a cheat sheet.
 
@@ -53,6 +57,7 @@ Untick **Launch at login**, choose **Quit**, then delete `~/Applications/HerdrMe
 ## Notes
 
 - The keybinds shown are herdr's defaults (prefix `ctrl+b`). They aren't read from `config.toml`.
+- `HerdrMenu --demo` shows made-up workspaces and agents instead of yours, with clicks disabled. The screenshots use it; add `--open-menu` to open the menu on launch.
 - Status colours are herdr's Catppuccin palette, its default theme.
 - The app icon is herdr's logo (`logo.png`), and the menu bar icon is the same logo converted to a template image (`sheep.png`).
 

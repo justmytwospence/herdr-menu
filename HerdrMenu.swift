@@ -157,6 +157,23 @@ let statusIcons: [String: (String, NSColor)] = [
 let unknownIcon = ("circle.dotted", hex(0x6c7086)) // overlay0
 let statusOrder = ["blocked", "done", "working", "idle"]
 
+// `--demo` shows this made-up session instead of herdr's, for README screenshots: one agent in each state,
+// neutral names, and clicks that do nothing. `--open-menu` opens the menu a second after launch.
+let demo = CommandLine.arguments.contains("--demo")
+let demoSnapshot: [String: Any] = {
+    let spaces = [("api", "auth refactor", "blocked"), ("website", "landing page copy", "done"),
+                  ("docs", "api reference", "working"), ("infra", "terraform plan", "idle")]
+    var workspaces: [[String: Any]] = [], tabs: [[String: Any]] = [], agents: [[String: Any]] = []
+    for (i, (space, tab, status)) in spaces.enumerated() {
+        let w = "w\(i + 1)", focused = space == "docs"
+        workspaces.append(["workspace_id": w, "label": space, "agent_status": status, "focused": focused])
+        tabs.append(["tab_id": "\(w):t1", "workspace_id": w, "label": tab])
+        agents.append(["pane_id": "\(w):p1", "tab_id": "\(w):t1", "workspace_id": w, "agent": "claude",
+                       "agent_status": status, "terminal_title_stripped": tab, "focused": focused])
+    }
+    return ["workspaces": workspaces, "tabs": tabs, "agents": agents, "panes": agents]
+}()
+
 class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var icon = NSImage(), notched = NSImage()
@@ -189,14 +206,17 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         refresh()
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
+        if CommandLine.arguments.contains("--open-menu") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.status.button?.performClick(nil) }
+        }
     }
 
     // Always running (brew services); the icon only shows while a herdr client is open.
     // A red dot means an agent is blocked on me, teal means one finished and I haven't looked yet.
     func refresh() {
-        status.isVisible = herdrClientPID() != nil
+        status.isVisible = demo || herdrClientPID() != nil
         guard status.isVisible, let button = status.button else { return }
-        let statuses = agentStatuses()
+        let statuses = demo ? (demoSnapshot["agents"] as! [[String: Any]]).map { $0["agent_status"] as! String } : agentStatuses()
         let blocked = statuses.filter { $0 == "blocked" }.count, done = statuses.filter { $0 == "done" }.count
         let color = blocked > 0 ? statusIcons["blocked"]?.1 : done > 0 ? statusIcons["done"]?.1 : nil
         button.image = color == nil ? icon : notched
@@ -214,7 +234,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Agents / Pane (named after the focused pane) / Tab / Workspace / Quit
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let snap = result(["api", "snapshot"])?["snapshot"] as? [String: Any]
+        let snap = demo ? demoSnapshot : result(["api", "snapshot"])?["snapshot"] as? [String: Any]
 
         let workspaces = snap?["workspaces"] as? [[String: Any]] ?? []
         // Workspace and tab ids -> their names (tabs carry a workspace_id too, so tab_id is checked first)
@@ -295,6 +315,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // A macOS login item (System Settings → General → Login Items), so the app starts at login.
     // It stays hidden until a herdr client is open, like any other time.
     @objc func toggleLaunchAtLogin() {
+        guard !demo else { return }
         let service = SMAppService.mainApp
         do {
             if service.status == .enabled { try service.unregister() } else { try service.register() }
@@ -305,6 +326,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func click(_ sender: NSMenuItem) {
+        guard !demo else { return }
         guard var args = sender.representedObject as? [String] else { return }
         var pane: [String: Any] = [:]
         if args.contains(where: idFields.keys.contains) {
