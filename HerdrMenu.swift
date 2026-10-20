@@ -46,6 +46,9 @@ func run(_ args: [String], exe: String = herdr) -> (ok: Bool, out: Data, err: St
     let p = Process(), out = Pipe(), err = Pipe()
     p.executableURL = URL(fileURLWithPath: exe)
     p.arguments = args
+    // Drop herdr's caller context (HERDR_PANE_ID etc.) in case this app was launched from a herdr pane:
+    // the CLI would treat that pane as the caller, so "current pane" and splits would ignore what's focused.
+    p.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("HERDR_") }
     p.standardOutput = out
     p.standardError = err
     do { try p.run() } catch { return (false, Data(), error.localizedDescription) }
