@@ -124,7 +124,8 @@ struct Keybinds {
 
 // MARK: - herdr
 
-func run(_ args: [String], exe: String = herdr) -> (ok: Bool, out: Data, err: String) {
+// timeout: kill the call after this many seconds, for remote machines whose SSH link may hang
+func run(_ args: [String], exe: String = herdr, timeout: TimeInterval? = nil) -> (ok: Bool, out: Data, err: String) {
     let p = Process(), out = Pipe(), err = Pipe()
     p.executableURL = URL(fileURLWithPath: exe)
     p.arguments = args
@@ -134,6 +135,9 @@ func run(_ args: [String], exe: String = herdr) -> (ok: Bool, out: Data, err: St
     p.standardOutput = out
     p.standardError = err
     do { try p.run() } catch { return (false, Data(), error.localizedDescription) }
+    if let timeout {
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if p.isRunning { p.terminate() } }
+    }
     let data = out.fileHandleForReading.readDataToEndOfFile()
     let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     p.waitUntilExit()
@@ -173,8 +177,53 @@ let decoder = {
     return d
 }()
 
-func herdrResult(_ args: [String]) -> Result? {
-    try? decoder.decode(Response.self, from: run(args).out).result
+func herdrResult(_ args: [String], timeout: TimeInterval? = nil) -> Result? {
+    try? decoder.decode(Response.self, from: run(args, timeout: timeout).out).result
+}
+
+// MARK: - Machines
+
+// A herdr server the menu talks to: this Mac's own (id nil), or a saved SSH machine reached with
+// `herdr --machine <id> ...` (herdr 0.9.5+ forwards the socket API over its SSH link).
+struct Machine: Equatable {
+    let id: String?
+    let name: String
+    static let local = Machine(id: nil, name: "Local")
+
+    func cmd(_ args: [String]) -> [String] { (id.map { ["--machine", $0] } ?? []) + args }
+    // Remote calls go over SSH; don't let a dead link hang the menu
+    func result(_ args: [String]) -> Result? { herdrResult(cmd(args), timeout: id == nil ? nil : 3) }
+}
+
+// `herdr machine list --json`
+struct SavedMachine: Decodable {
+    let id, label: String
+    let enabled: Bool
+    let selected: Bool? // the machine the herdr TUI is showing
+}
+
+// Local first, then every enabled saved machine; plus the one selected in the TUI, if any
+func loadMachines() -> (all: [Machine], selected: Machine?) {
+    let saved = ((try? decoder.decode([SavedMachine].self, from: run(["machine", "list", "--json"]).out)) ?? []).filter(\.enabled)
+    let machine = { (s: SavedMachine) in Machine(id: s.id, name: s.label) }
+    return ([.local] + saved.map(machine), saved.first { $0.selected == true }.map(machine))
+}
+
+// The same command on every machine at once, results in the same order
+func fetch(_ machines: [Machine], _ args: [String]) -> [Result?] {
+    var out = [Result?](repeating: nil, count: machines.count)
+    let lock = NSLock()
+    DispatchQueue.concurrentPerform(iterations: machines.count) { i in
+        let r = machines[i].result(args)
+        lock.withLock { out[i] = r }
+    }
+    return out
+}
+
+// A menu row's command: CLI args and the machine to run them on
+struct Command {
+    let machine: Machine
+    let args: [String]
 }
 
 // What to call a pane or agent: its terminal title, else the agent, else its folder
@@ -188,12 +237,13 @@ func short(_ s: String, _ max: Int) -> String {
 }
 
 // A herdr TUI client is `herdr [--options]` or `herdr session attach <name>`.
-// The long-lived server (`herdr server`) and one-shot CLI calls (`herdr pane ...`) don't count.
+// The long-lived server (`herdr server`) and one-shot CLI calls (`herdr pane ...`,
+// `herdr --machine NUC agent list`, including this app's own polling) don't count.
 // ponytail: splits on spaces, so a herdr binary whose path contains a space is missed.
 func isHerdrClient(_ command: String) -> Bool {
     let t = command.split(separator: " ")
     guard let exe = t.first, exe == "herdr" || exe.hasSuffix("/herdr") else { return false }
-    return t.count == 1 || t[1].hasPrefix("-") || (t[1] == "session" && t.count > 2 && t[2] == "attach")
+    return t.count == 1 || (t[1].hasPrefix("-") && t[1] != "--machine") || (t[1] == "session" && t.count > 2 && t[2] == "attach")
 }
 
 func herdrClientPID() -> String? {
@@ -274,6 +324,16 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let dot = NSView()
     var keybinds = Keybinds(toml: "")
 
+    // From the last refresh. Actions go to `target`: the machine I picked in the menu, else the one
+    // the TUI shows, else Local. Switching machines in the TUI drops the menu's pick.
+    var machines = [Machine.local]
+    var tuiSelected: Machine?
+    var picked: Machine?
+    var refreshing = false
+    var target: Machine {
+        [picked, tuiSelected].compactMap { $0 }.first(where: machines.contains) ?? .local
+    }
+
     // The status badge: a 7pt dot in an 11pt notch cut from the icon's bottom-right corner.
     // The icon stays a template image (macOS tints it for light/dark); only the dot is coloured.
     let iconSize: CGFloat = 18, dotSize: CGFloat = 7, notchSize: CGFloat = 11
@@ -305,10 +365,26 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Always running (a login item); the icon only shows while a herdr client is open.
     // A red dot means an agent is blocked on me, teal means one finished and I haven't looked yet.
+    // Polls off the main thread, since remote machines answer over SSH.
     func refresh() {
-        status.isVisible = herdrClientPID() != nil
-        guard status.isVisible, let button = status.button else { return }
-        let statuses = herdrResult(["agent", "list"])?.agents?.compactMap(\.agentStatus) ?? []
+        guard !refreshing else { return }
+        refreshing = true
+        DispatchQueue.global().async {
+            let visible = herdrClientPID() != nil
+            let (all, selected) = visible ? loadMachines() : ([Machine.local], nil)
+            let lists = visible ? fetch(all, ["agent", "list"]) : []
+            DispatchQueue.main.async {
+                self.refreshing = false
+                self.machines = all
+                if selected != self.tuiSelected { self.tuiSelected = selected; self.picked = nil }
+                self.show(visible: visible, statuses: lists.flatMap { $0?.agents ?? [] }.compactMap(\.agentStatus))
+            }
+        }
+    }
+
+    func show(visible: Bool, statuses: [String]) {
+        status.isVisible = visible
+        guard visible, let button = status.button else { return }
         let blocked = statuses.filter { $0 == "blocked" }.count, done = statuses.filter { $0 == "done" }.count
         let color = blocked > 0 ? style("blocked").color : done > 0 ? style("done").color : nil
         button.image = color == nil ? icon : notched
@@ -329,44 +405,68 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Reread my config so edits show up straight away
         let config = NSHomeDirectory() + "/.config/herdr/config.toml"
         keybinds = Keybinds(toml: (try? String(contentsOfFile: config, encoding: .utf8)) ?? "")
-        let snap = herdrResult(["api", "snapshot"])?.snapshot
-        let workspaces = snap?.workspaces ?? []
-        let names = Dictionary((workspaces + (snap?.tabs ?? [])).map { ($0.tabId ?? $0.workspaceId, $0.label) }) { first, _ in first }
+        // Every machine at once; a remote one that doesn't answer in time shows as unreachable
+        let all = machines, multi = all.count > 1, target = target
+        let snaps = fetch(all, ["api", "snapshot"]).map { $0?.snapshot }
+        func names(_ snap: Snapshot?) -> [String: String] {
+            Dictionary(((snap?.workspaces ?? []) + (snap?.tabs ?? [])).map { ($0.tabId ?? $0.workspaceId, $0.label) }) { first, _ in first }
+        }
 
-        // Named like herdr's sidebar: workspace, then the tab in grey
-        menu.addItem(.sectionHeader(title: "Agents"))
-        let agents = (snap?.agents ?? []).sorted { rank($0.agentStatus) < rank($1.agentStatus) }
-        if agents.isEmpty { menu.addItem(NSMenuItem(title: "No agents", action: nil, keyEquivalent: "")) }
-        for a in agents {
-            menu.addItem(listRow(names[a.workspaceId] ?? displayName(a), detail: names[a.tabId] ?? displayName(a),
-                                 status: a.agentStatus, focused: a.focused, args: ["agent", "focus", a.paneId]))
+        // Named like herdr's sidebar: workspace, then the tab in grey. One section per machine when there are several.
+        for (m, snap) in zip(all, snaps) {
+            menu.addItem(.sectionHeader(title: multi ? "Agents · \(m.name)" : "Agents"))
+            let n = names(snap)
+            let agents = (snap?.agents ?? []).sorted { rank($0.agentStatus) < rank($1.agentStatus) }
+            if agents.isEmpty {
+                menu.addItem(NSMenuItem(title: snap == nil && m.id != nil ? "Not reachable" : "No agents", action: nil, keyEquivalent: ""))
+            }
+            for a in agents {
+                menu.addItem(listRow(n[a.workspaceId] ?? displayName(a), detail: n[a.tabId] ?? displayName(a),
+                                     status: a.agentStatus, focused: a.focused,
+                                     command: Command(machine: m, args: ["agent", "focus", a.paneId])))
+            }
         }
         menu.addItem(.separator())
+
+        // Which machine the Workspace / Tab / Pane actions below act on
+        if multi {
+            menu.addItem(header("Machine", target.name))
+            for (i, m) in all.enumerated() {
+                let mi = menuItem(m.name, icon: m.id == nil ? "laptopcomputer" : "server.rack", action: #selector(pick(_:)))
+                mi.representedObject = i
+                mi.state = m == target ? .on : .off
+                if snaps[i] == nil { mi.isEnabled = false }
+                menu.addItem(mi)
+            }
+            menu.addItem(.separator())
+        }
+        let snap = all.firstIndex(of: target).flatMap { snaps[$0] }
+        let n = names(snap)
 
         // Then biggest to smallest, like herdr: workspace, tab, pane. Each header names the focused one,
         // which is where its actions land.
         let pane = snap?.panes.first { $0.focused == true }
-        menu.addItem(header("Workspace", pane.flatMap { names[$0.workspaceId] }))
-        for w in workspaces {
+        menu.addItem(header("Workspace", pane.flatMap { n[$0.workspaceId] }))
+        for w in snap?.workspaces ?? [] {
             menu.addItem(listRow(w.label, detail: "", status: w.agentStatus, focused: w.focused,
-                                 args: ["workspace", "focus", w.workspaceId]))
+                                 command: Command(machine: target, args: ["workspace", "focus", w.workspaceId])))
         }
-        add(workspaceActions, to: menu)
+        add(workspaceActions, to: menu, on: target)
         menu.addItem(.separator())
 
-        menu.addItem(header("Tab", pane.flatMap { names[$0.tabId] }))
-        add(tabActions, to: menu)
+        menu.addItem(header("Tab", pane.flatMap { n[$0.tabId] }))
+        add(tabActions, to: menu, on: target)
         menu.addItem(.separator())
 
         menu.addItem(header("Pane", pane.map(displayName)))
-        add(paneActions, to: menu)
+        add(paneActions, to: menu, on: target)
         for sub in paneSubmenus {
             let mi = menuItem(sub.title, icon: sub.icon, action: nil)
             mi.submenu = NSMenu()
-            sub.actions.forEach { mi.submenu?.addItem(item($0)) }
+            sub.actions.forEach { mi.submenu?.addItem(item($0, on: target)) }
             menu.addItem(mi)
         }
-        menu.addItem(item(closePane))
+        menu.addItem(item(closePane, on: target))
         menu.addItem(.separator())
 
         let login = menuItem("Launch at login", icon: "sunrise", action: #selector(toggleLaunchAtLogin))
@@ -384,25 +484,26 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Every row: icon and title, optional keybind or detail column, and the CLI args to run when clicked
     func menuItem(_ title: String, icon: String, keys: (String, String) = ("", ""), tint: NSColor? = nil,
-                  args: [String]? = nil, action: Selector? = #selector(App.click(_:))) -> NSMenuItem {
+                  command: Command? = nil, action: Selector? = #selector(App.click(_:))) -> NSMenuItem {
         let mi = NSMenuItem(title: title, action: action, keyEquivalent: "")
         mi.attributedTitle = label(title, icon: icon, keys: keys, tint: tint)
-        mi.representedObject = args
+        mi.representedObject = command
         mi.target = self
         return mi
     }
 
-    func item(_ a: Action) -> NSMenuItem {
-        menuItem(a.title, icon: a.icon, keys: keybinds.keys(for: a.binding), args: a.args)
+    // ponytail: keybinds come from this Mac's config.toml, even for a remote machine's actions
+    func item(_ a: Action, on m: Machine) -> NSMenuItem {
+        menuItem(a.title, icon: a.icon, keys: keybinds.keys(for: a.binding), command: Command(machine: m, args: a.args))
     }
 
     // Each action's row. "New tab…" and "New workspace…" ask for a name first; holding ⌥ swaps each for a
     // quick version without the "…" or the name prompt, which creates straight away like herdr's own keybind.
-    func add(_ actions: [Action], to menu: NSMenu) {
+    func add(_ actions: [Action], to menu: NSMenu, on m: Machine) {
         for a in actions {
-            menu.addItem(item(a))
+            menu.addItem(item(a, on: m))
             if a.title.hasSuffix("…") {
-                let alt = item((String(a.title.dropLast()), a.icon, a.binding, a.args.filter { $0 != "--label" && $0 != "{label}" }))
+                let alt = item((String(a.title.dropLast()), a.icon, a.binding, a.args.filter { $0 != "--label" && $0 != "{label}" }), on: m)
                 alt.isAlternate = true
                 alt.keyEquivalentModifierMask = .option
                 menu.addItem(alt)
@@ -411,10 +512,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // An agent or workspace row: herdr's status dot, name, grey detail, checkmark when focused
-    func listRow(_ title: String, detail: String, status: String?, focused: Bool?, args: [String]) -> NSMenuItem {
+    func listRow(_ title: String, detail: String, status: String?, focused: Bool?, command: Command) -> NSMenuItem {
         let (symbol, color) = style(status)
         // short() keeps the detail column straight
-        let mi = menuItem(short(title, 26), icon: symbol, keys: ("", short(detail, 30)), tint: color, args: args)
+        let mi = menuItem(short(title, 26), icon: symbol, keys: ("", short(detail, 30)), tint: color, command: command)
         mi.state = focused == true ? .on : .off
         return mi
     }
@@ -431,11 +532,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
     }
 
+    @objc func pick(_ sender: NSMenuItem) {
+        guard let i = sender.representedObject as? Int, machines.indices.contains(i) else { return }
+        picked = machines[i]
+    }
+
+    // ponytail: focusing a remote agent moves focus on that machine's server; the TUI only shows it
+    // if it's viewing that machine (herdr's CLI can't switch the TUI's machine).
     @objc func click(_ sender: NSMenuItem) {
-        guard var args = sender.representedObject as? [String] else { return }
+        guard let command = sender.representedObject as? Command else { return }
+        let m = command.machine
+        var args = command.args
         var pane: Pane?
         if !Set(["{pane}", "{tab}", "{workspace}"]).isDisjoint(with: args) {
-            guard let p = herdrResult(["pane", "current"])?.pane else { return alert("Couldn't find the focused herdr pane.") }
+            guard let p = m.result(["pane", "current"])?.pane else { return alert("Couldn't find the focused herdr pane on \(m.name).") }
             pane = p
             let ids = ["{pane}": p.paneId, "{tab}": p.tabId, "{workspace}": p.workspaceId]
             args = args.map { ids[$0] ?? $0 }
@@ -449,11 +559,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Closing or renaming a tab or workspace: args are [kind, verb, id, …], and `<kind> get <id>`
         // gives the current name and pane count
         let kind = args[0], isGroup = ["tab", "workspace"].contains(kind) && ["close", "rename"].contains(args[1])
-        let group = isGroup ? herdrResult([kind, "get", args[2]]).flatMap { kind == "tab" ? $0.tab : $0.workspace } : nil
+        let group = isGroup ? m.result([kind, "get", args[2]]).flatMap { kind == "tab" ? $0.tab : $0.workspace } : nil
         // Tabs and workspaces always ask: everything inside them closes, agents included
         if isGroup, args[1] == "close" {
             let panes = group?.paneCount ?? 0
-            let agents = (herdrResult(["agent", "list"])?.agents ?? [])
+            let agents = (m.result(["agent", "list"])?.agents ?? [])
                 .filter { (kind == "tab" ? $0.tabId : $0.workspaceId) == args[2] }.compactMap(\.agent)
             let ending = "its \(panes) pane\(panes == 1 ? "" : "s")"
             let who = agents.count == 1 ? "the \(agents[0]) agent" : "\(agents.count) agents (\(agents.joined(separator: ", ")))"
@@ -472,8 +582,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 args[i] = field.stringValue
             }
         }
-        let r = run(args)
-        if r.ok { bringTerminalForward() } else { alert(r.err.isEmpty ? "herdr \(args.joined(separator: " ")) failed" : r.err) }
+        let r = run(m.cmd(args), timeout: m.id == nil ? nil : 10)
+        if r.ok { bringTerminalForward() } else { alert(r.err.isEmpty ? "herdr \(m.cmd(args).joined(separator: " ")) failed" : r.err) }
     }
 
     // A two-button dialog (button / Cancel), optionally with a text field. True if the button was pressed.
@@ -515,6 +625,12 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(!isHerdrClient("herdr session list"))
     precondition(!isHerdrClient("/path/herdr-bar --watch-titles 3"))
     precondition(!isHerdrClient("vim herdr"))
+    precondition(!isHerdrClient("herdr --machine NUC agent list"))
+    precondition(isHerdrClient("herdr --remote nuc"))
+    precondition(Machine(id: "abc", name: "NUC").cmd(["agent", "list"]) == ["--machine", "abc", "agent", "list"])
+    precondition(Machine.local.cmd(["agent", "list"]) == ["agent", "list"])
+    let saved = try! decoder.decode([SavedMachine].self, from: Data(#"[{"id":"abc","label":"NUC","target":"nuc","session":"default","enabled":true,"selected":false}]"#.utf8))
+    precondition(saved[0].label == "NUC" && saved[0].enabled && saved[0].selected == false)
     let k = Keybinds(toml: """
     [keys]
     prefix = "ctrl+a"  # a comment

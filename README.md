@@ -35,6 +35,12 @@ It calls the `herdr` CLI rather than faking keystrokes, so it acts on whichever 
 
 Hover over the sheep to see how many agents are blocked or done. Viewing a finished agent in herdr clears its badge.
 
+### Several machines
+
+If you've saved SSH machines with `herdr machine add`, the menu lists each enabled machine's agents under its own heading, and the sheep's badge counts them all. A **Machine** section picks which machine the Workspace, Tab and Pane actions act on. By default that's the machine the herdr TUI is showing, or Local. Everything goes through `herdr --machine <id> ...`, so it needs herdr 0.9.5 or later on both ends. A machine that doesn't answer within 3 seconds shows as *Not reachable*.
+
+Clicking a remote agent moves focus on that machine's server. You only see it if your TUI is showing that machine, because the CLI can't switch the TUI's machine for you.
+
 ## Requirements
 
 - macOS 14 or later
