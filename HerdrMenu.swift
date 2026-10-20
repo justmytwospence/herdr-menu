@@ -331,7 +331,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // The whole menu is rebuilt from the live snapshot each time it opens:
-    // Agents / Pane (named after the focused pane) / Tab / Workspace / Quit
+    // Agents / Workspace / Tab / Pane (each named after the focused one) / Launch at login, Quit
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         // Reread my config so edits show up straight away
@@ -351,9 +351,23 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        let focused = snap?.panes.first { $0.focused == true }
-        menu.addItem(.sectionHeader(title: focused.map { "Pane · " + short(displayName($0), 30) } ?? "Pane"))
-        paneActions.forEach { menu.addItem(item($0)) }
+        // Then biggest to smallest, like herdr: workspace, tab, pane. Each header names the focused one,
+        // which is where its actions land.
+        let pane = snap?.panes.first { $0.focused == true }
+        menu.addItem(header("Workspace", pane.flatMap { names[$0.workspaceId] }))
+        for w in workspaces {
+            menu.addItem(listRow(w.label, detail: "", status: w.agentStatus, focused: w.focused,
+                                 args: ["workspace", "focus", w.workspaceId]))
+        }
+        add(workspaceActions, to: menu)
+        menu.addItem(.separator())
+
+        menu.addItem(header("Tab", pane.flatMap { names[$0.tabId] }))
+        add(tabActions, to: menu)
+        menu.addItem(.separator())
+
+        menu.addItem(header("Pane", pane.map(displayName)))
+        add(paneActions, to: menu)
         for sub in paneSubmenus {
             let mi = menuItem(sub.title, icon: sub.icon, action: nil)
             mi.submenu = NSMenu()
@@ -363,24 +377,17 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item(closePane))
         menu.addItem(.separator())
 
-        menu.addItem(.sectionHeader(title: "Tab"))
-        add(tabActions, to: menu)
-        menu.addItem(.separator())
-
-        menu.addItem(.sectionHeader(title: "Workspace"))
-        for w in workspaces {
-            menu.addItem(listRow(w.label, detail: "", status: w.agentStatus, focused: w.focused,
-                                 args: ["workspace", "focus", w.workspaceId]))
-        }
-        add(workspaceActions, to: menu)
-        menu.addItem(.separator())
-
         let login = menuItem("Launch at login", icon: "sunrise", action: #selector(toggleLaunchAtLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
         let quit = menuItem("Quit", icon: "power", action: #selector(NSApplication.terminate))
         quit.target = NSApp
         menu.addItem(quit)
+    }
+
+    // "Pane · dev": a section header naming the thing its actions act on
+    func header(_ kind: String, _ name: String?) -> NSMenuItem {
+        .sectionHeader(title: name.map { "\(kind) · " + short($0, 30) } ?? kind)
     }
 
     // Every row: icon and title, optional keybind or detail column, and the CLI args to run when clicked
