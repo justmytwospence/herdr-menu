@@ -20,6 +20,7 @@
 - **Agents** at the top of the menu, with herdr's status dots. Click one to jump to it.
 - **A badge on the sheep** when an agent needs you (see [the sheep](#the-sheep) below).
 - **One-click actions** for panes (split, zoom, focus, resize, swap, close), tabs and workspaces (new, rename, close), plus a list of your workspaces to jump between.
+  **New tab…** and **New workspace…** ask for a name first; hold **⌥ Option** for the quick versions, which create them straight away like herdr's keybinds.
 - **herdr's keybind next to each action,** so the menu doubles as a cheat sheet.
 
 It calls the `herdr` CLI rather than faking keystrokes, so it acts on whichever pane you're looking at and doesn't need Accessibility permission. After a click, it brings your terminal to the front. The icon only appears while herdr is open.
