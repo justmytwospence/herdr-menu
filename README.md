@@ -16,8 +16,8 @@ Needs the Xcode command line tools (`swiftc`).
 ## Notes
 
 - The keybinds shown are herdr's defaults (prefix `ctrl+b`). They aren't read from `config.toml`.
-- The menu bar icon is herdr's logo, converted to a template image (`sheep.png`).
+- The app icon is herdr's logo (`logo.png`), and the menu bar icon is the same logo converted to a template image (`sheep.png`).
 
 ## Credits
 
-HerdrMenu is an unofficial companion app and isn't affiliated with herdr. The sheep logo comes from [herdrdev/herdr](https://github.com/herdrdev/herdr) (`assets/logo.svg`), licensed under the Apache License 2.0, and has been converted to a monochrome menu bar icon.
+HerdrMenu is an unofficial companion app and isn't affiliated with herdr. The sheep logo comes from [herdrdev/herdr](https://github.com/herdrdev/herdr) (`assets/logo.svg`), licensed under the Apache License 2.0. It's used as the app icon and converted to a monochrome menu bar icon.

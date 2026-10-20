@@ -294,17 +294,24 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pane = p
             args = args.map { idFields[$0].flatMap { pane[$0] as? String } ?? $0 }
         }
+        // Confirmations follow Apple's alert guidelines: say what ends, name the button after the action,
+        // style it as destructive, and keep Return on Cancel.
         if args.starts(with: ["pane", "close"]), let agent = pane["agent"] as? String {
-            guard ask("Close this pane?", "\(agent) is running in “\(displayName(pane))”.", button: "Close") else { return }
+            guard ask("Close this pane?", "This ends the \(agent) agent running in “\(displayName(pane))”.",
+                      button: "Close Pane", destructive: true) else { return }
         }
         // Tabs and workspaces always ask: everything inside them closes, agents included
         if args.count == 3, args[1] == "close", ["tab", "workspace"].contains(args[0]) {
-            let kind = args[0]
-            let info = result([kind, "get", args[2]])?[kind] as? [String: Any] ?? [:]
+            let kind = args[0], id = args[2]
+            let info = result([kind, "get", id])?[kind] as? [String: Any] ?? [:]
             let panes = info["pane_count"] as? Int ?? 0
-            guard ask("Close \(kind) “\(info["label"] as? String ?? kind)”?",
-                      "\(panes) pane\(panes == 1 ? "" : "s") will close, including any agents running in them.",
-                      button: "Close") else { return }
+            let agents = (result(["agent", "list"])?["agents"] as? [[String: Any]] ?? [])
+                .filter { $0["\(kind)_id"] as? String == id }.compactMap { $0["agent"] as? String }
+            let ending = "its \(panes) pane\(panes == 1 ? "" : "s")"
+            let who = agents.count == 1 ? "the \(agents[0]) agent" : "\(agents.count) agents (\(agents.joined(separator: ", ")))"
+            guard ask("Close the \(kind) “\(info["label"] as? String ?? kind)”?",
+                      agents.isEmpty ? "This ends \(ending)." : "This ends \(ending), including \(who) running there.",
+                      button: "Close \(kind.capitalized)", destructive: true) else { return }
         }
         if let i = args.firstIndex(of: "{label}") {
             // args are [kind, "rename", id, label]; prefill with the current name from `<kind> get <id>`
@@ -319,12 +326,18 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // A two-button dialog (button / Cancel), optionally with a text field. True if the button was pressed.
-    func ask(_ title: String, _ text: String, button: String, field: NSTextField? = nil) -> Bool {
+    // Destructive: the button is drawn red and Return presses Cancel instead.
+    func ask(_ title: String, _ text: String, button: String, destructive: Bool = false, field: NSTextField? = nil) -> Bool {
         let a = NSAlert()
         a.messageText = title
         a.informativeText = text
-        a.addButton(withTitle: button)
-        a.addButton(withTitle: "Cancel")
+        let action = a.addButton(withTitle: button)
+        let cancel = a.addButton(withTitle: "Cancel")
+        if destructive {
+            action.hasDestructiveAction = true
+            action.keyEquivalent = ""
+            cancel.keyEquivalent = "\r"
+        }
         if let field {
             a.accessoryView = field
             a.window.initialFirstResponder = field
