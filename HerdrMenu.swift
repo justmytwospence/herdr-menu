@@ -86,9 +86,24 @@ func isHerdrClient(_ command: String) -> Bool {
     return t.count == 1 || t[1].hasPrefix("-") || (t[1] == "session" && t.count > 2 && t[2] == "attach")
 }
 
-func herdrClientOpen() -> Bool {
-    String(decoding: run(["-axo", "command="], exe: "/bin/ps").out, as: UTF8.self)
-        .split(separator: "\n").contains { isHerdrClient(String($0)) }
+func herdrClientPID() -> String? {
+    String(decoding: run(["-axo", "pid=,command="], exe: "/bin/ps").out, as: UTF8.self)
+        .split(separator: "\n").lazy
+        .map { $0.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1).map(String.init) }
+        .first { $0.count == 2 && isHerdrClient($0[1]) }?[0]
+}
+
+// Bring forward the terminal app the herdr client runs in. macOS puts the launching app's
+// bundle id in every child's environment as __CFBundleIdentifier (com.googlecode.iterm2 for iTerm2).
+// openApplication is what the Dock does, so it works from a menu bar app where activate() may not.
+// ponytail: raises the app's frontmost window, not necessarily the herdr one if the terminal has several.
+func bringTerminalForward() {
+    guard let pid = herdrClientPID() else { return }
+    let env = String(decoding: run(["eww", "-o", "command=", "-p", pid], exe: "/bin/ps").out, as: UTF8.self)
+    guard let entry = env.split(separator: " ").first(where: { $0.hasPrefix("__CFBundleIdentifier=") }),
+          let id = entry.split(separator: "=", maxSplits: 1).last,
+          let url = NSRunningApplication.runningApplications(withBundleIdentifier: String(id)).first?.bundleURL else { return }
+    NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
 }
 
 // Icon, title, then keybind right-aligned in grey, like Rectangle.
@@ -171,7 +186,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Always running (brew services); the icon only shows while a herdr client is open.
     // A red dot means an agent is blocked on me, teal means one finished and I haven't looked yet.
     func refresh() {
-        status.isVisible = herdrClientOpen()
+        status.isVisible = herdrClientPID() != nil
         guard status.isVisible, let button = status.button else { return }
         let statuses = agentStatuses()
         let blocked = statuses.filter { $0 == "blocked" }.count, done = statuses.filter { $0 == "done" }.count
@@ -250,7 +265,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func focusAgent(_ sender: NSMenuItem) {
         guard let pane = sender.representedObject as? String else { return }
         let r = run(["agent", "focus", pane])
-        if !r.ok { alert(r.err.isEmpty ? "Couldn't focus that agent" : r.err) }
+        if r.ok { bringTerminalForward() } else { alert(r.err.isEmpty ? "Couldn't focus that agent" : r.err) }
     }
 
     @objc func click(_ sender: NSMenuItem) {
@@ -275,7 +290,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             args[i] = field.stringValue
         }
         let r = run(args)
-        if !r.ok { alert(r.err.isEmpty ? "herdr \(args.joined(separator: " ")) failed" : r.err) }
+        if r.ok { bringTerminalForward() } else { alert(r.err.isEmpty ? "herdr \(args.joined(separator: " ")) failed" : r.err) }
     }
 
     // A two-button dialog (button / Cancel), optionally with a text field. True if the button was pressed.
