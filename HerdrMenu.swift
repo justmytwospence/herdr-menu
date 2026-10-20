@@ -5,45 +5,126 @@ import ServiceManagement
 let herdr = [NSHomeDirectory() + "/.local/bin/herdr", "/opt/homebrew/bin/herdr", "/usr/local/bin/herdr"]
     .first(where: FileManager.default.isExecutableFile) ?? "herdr"
 
-// (title, SF Symbol, herdr keybind, CLI args).
+// (title, SF Symbol, herdr keybinding action, CLI args). The keybind shown comes from Keybinds below.
 // "{pane}", "{tab}", "{workspace}" become the focused ids at click time; "{label}" prompts for a name.
-// ponytail: keybinds are herdr's defaults (prefix ctrl+b), not read from config.toml; parse [keys] if I rebind.
-typealias Action = (title: String, icon: String, keys: String, args: [String])
+typealias Action = (title: String, icon: String, action: String, args: [String])
 
 let dirs = ["left", "right", "up", "down"]
 
-// The rows of a "Focus ›" style submenu, one per direction
-func four(_ verb: String, icons: [String], keys: [String]) -> [Action] {
-    dirs.indices.map { (dirs[$0].capitalized, icons[$0], keys[$0], ["pane", verb, "--direction", dirs[$0]]) }
+// The rows of a "Focus ›" style submenu, one per direction; herdr names the actions focus_pane_left etc.
+func four(_ verb: String, icons: [String]) -> [Action] {
+    dirs.indices.map { (dirs[$0].capitalized, icons[$0], "\(verb)_pane_\(dirs[$0])", ["pane", verb, "--direction", dirs[$0]]) }
 }
 
 let paneActions: [Action] = [
-    ("Split right", "rectangle.split.2x1", "⌃B V", ["pane", "split", "--direction", "right", "--focus"]),
-    ("Split down", "rectangle.split.1x2", "⌃B −", ["pane", "split", "--direction", "down", "--focus"]),
-    ("Toggle zoom", "arrow.up.left.and.arrow.down.right", "⌃B Z", ["pane", "zoom", "--toggle"]),
+    ("Split right", "rectangle.split.2x1", "split_vertical", ["pane", "split", "--direction", "right", "--focus"]),
+    ("Split down", "rectangle.split.1x2", "split_horizontal", ["pane", "split", "--direction", "down", "--focus"]),
+    ("Toggle zoom", "arrow.up.left.and.arrow.down.right", "zoom", ["pane", "zoom", "--toggle"]),
 ]
 let paneSubmenus: [(title: String, icon: String, actions: [Action])] = [
     ("Focus", "rectangle.lefthalf.inset.filled",
-     four("focus", icons: ["rectangle.lefthalf.filled", "rectangle.righthalf.filled", "rectangle.tophalf.filled", "rectangle.bottomhalf.filled"],
-          keys: ["⌃B H", "⌃B L", "⌃B K", "⌃B J"])),
+     four("focus", icons: ["rectangle.lefthalf.filled", "rectangle.righthalf.filled", "rectangle.tophalf.filled", "rectangle.bottomhalf.filled"])),
     ("Resize", "arrow.up.and.down.and.arrow.left.and.right",
-     four("resize", icons: ["arrow.left.to.line", "arrow.right.to.line", "arrow.up.to.line", "arrow.down.to.line"],
-          keys: ["←", "→", "↑", "↓"].map { "⌃B R \($0)" })),
+     four("resize", icons: ["arrow.left.to.line", "arrow.right.to.line", "arrow.up.to.line", "arrow.down.to.line"])),
     ("Swap", "rectangle.2.swap",
-     four("swap", icons: ["arrow.left.arrow.right", "arrow.left.arrow.right", "arrow.up.arrow.down", "arrow.up.arrow.down"],
-          keys: ["", "", "", ""])),
+     four("swap", icons: ["arrow.left.arrow.right", "arrow.left.arrow.right", "arrow.up.arrow.down", "arrow.up.arrow.down"])),
 ]
-let closePane: Action = ("Close pane", "xmark.square", "⌃B X", ["pane", "close", "{pane}"])
+let closePane: Action = ("Close pane", "xmark.square", "close_pane", ["pane", "close", "{pane}"])
 let tabActions: [Action] = [
-    ("New tab", "plus.rectangle.on.rectangle", "⌃B C", ["tab", "create", "--focus"]),
-    ("Rename tab", "pencil", "⌃B ⇧T", ["tab", "rename", "{tab}", "{label}"]),
-    ("Close tab", "xmark.rectangle", "⌃B ⇧X", ["tab", "close", "{tab}"]),
+    ("New tab", "plus.rectangle.on.rectangle", "new_tab", ["tab", "create", "--focus"]),
+    ("Rename tab", "pencil", "rename_tab", ["tab", "rename", "{tab}", "{label}"]),
+    ("Close tab", "xmark.rectangle", "close_tab", ["tab", "close", "{tab}"]),
 ]
 let workspaceActions: [Action] = [
-    ("New workspace", "macwindow.badge.plus", "⌃B ⇧N", ["workspace", "create", "--focus"]),
-    ("Rename workspace", "square.and.pencil", "⌃B ⇧W", ["workspace", "rename", "{workspace}", "{label}"]),
-    ("Close workspace", "rectangle.badge.xmark", "⌃B ⇧D", ["workspace", "close", "{workspace}"]),
+    ("New workspace", "macwindow.badge.plus", "new_workspace", ["workspace", "create", "--focus"]),
+    ("Rename workspace", "square.and.pencil", "rename_workspace", ["workspace", "rename", "{workspace}", "{label}"]),
+    ("Close workspace", "rectangle.badge.xmark", "close_workspace", ["workspace", "close", "{workspace}"]),
 ]
+
+// My herdr keybinds from config.toml, resolved the way herdr does (src/config/keybinds.rs): a [keys] entry wins,
+// a default that shares a key with any of mine (including [[keys.command]] keys) is dropped, and "" or [] unbinds.
+// ponytail: reads `name = "x"` and `name = ["x", "y"]` on one line; multi-line arrays are skipped.
+struct Keybinds {
+    // herdr's defaults for the menu's actions: `herdr --default-config`, plus swap (missing there) from its keymap docs
+    static let defaults = [
+        "split_vertical": "prefix+v", "split_horizontal": "prefix+minus", "zoom": "prefix+z", "close_pane": "prefix+x",
+        "focus_pane_left": "prefix+h", "focus_pane_right": "prefix+l", "focus_pane_up": "prefix+k", "focus_pane_down": "prefix+j",
+        "swap_pane_left": "prefix+shift+h", "swap_pane_right": "prefix+shift+l",
+        "swap_pane_up": "prefix+shift+k", "swap_pane_down": "prefix+shift+j", "resize_mode": "prefix+r",
+        "new_tab": "prefix+c", "rename_tab": "prefix+shift+t", "close_tab": "prefix+shift+x",
+        "new_workspace": "prefix+shift+n", "rename_workspace": "prefix+shift+w", "close_workspace": "prefix+shift+d",
+    ]
+    static let modifierSymbols = [("ctrl", "⌃"), ("alt", "⌥"), ("shift", "⇧"), ("cmd", "⌘"), ("super", "⌘")]
+    static let keyNames = [
+        "minus": "−", "plus": "+", "equal": "=", "comma": ",", "period": ".", "slash": "/", "backslash": "\\",
+        "semicolon": ";", "quote": "'", "backtick": "`", "ampersand": "&", "left": "←", "right": "→", "up": "↑",
+        "down": "↓", "enter": "↩", "tab": "⇥", "esc": "⎋", "space": "Space", "backspace": "⌫", "delete": "⌦",
+        "home": "↖", "end": "↘", "pageup": "⇞", "pagedown": "⇟",
+    ]
+
+    var prefix = "ctrl+b"
+    var mine: [String: [String]] = [:] // [keys] action -> bindings
+    var commands: [String] = [] // [[keys.command]] keys
+
+    init(toml: String) {
+        var section = ""
+        for raw in toml.split(separator: "\n") {
+            let line = raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0].trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                section = line.trimmingCharacters(in: CharacterSet(charactersIn: "[] "))
+                continue
+            }
+            let kv = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard kv.count == 2 else { continue }
+            // The quoted strings in the value: odd pieces when split on quotes
+            let values = kv[1].split(separator: "\"", omittingEmptySubsequences: false).enumerated()
+                .filter { $0.offset % 2 == 1 && !$0.element.isEmpty }.map { String($0.element).lowercased() }
+            if section == "keys", kv[0] == "prefix" {
+                prefix = values.first ?? prefix
+            } else if section == "keys" {
+                mine[kv[0]] = values
+            } else if section == "keys.command", kv[0] == "key" {
+                commands += values
+            }
+        }
+    }
+
+    // The first active binding for a herdr action, nil when unbound
+    func binding(_ action: String) -> String? {
+        if let bindings = mine[action] { return bindings.first }
+        guard let fallback = Self.defaults[action] else { return nil }
+        return (mine.values.flatMap { $0 } + commands).contains(fallback) ? nil : fallback
+    }
+
+    // What the menu shows: (modifier column, key column), e.g. ("⌃B", "⇧N") or ("⌃⌥⇧", "←").
+    // Resize falls back to resize mode plus an arrow when resize_pane_* isn't bound.
+    func keys(for action: String) -> (String, String) {
+        if let b = binding(action) { return display(b) }
+        if action.hasPrefix("resize_pane_"), let mode = binding("resize_mode") {
+            let (left, right) = display(mode)
+            return (left, right + " " + Self.symbol(String(action.dropFirst("resize_pane_".count))))
+        }
+        return ("", "")
+    }
+
+    func display(_ binding: String) -> (String, String) {
+        var parts = binding.split(separator: "+").map(String.init)
+        let viaPrefix = parts.first == "prefix"
+        if viaPrefix { parts.removeFirst() }
+        let key = Self.symbol(parts.popLast() ?? "")
+        let mods = Self.modifierSymbols.filter { parts.contains($0.0) }.map(\.1).joined()
+        if viaPrefix {
+            let (prefixMods, prefixKey) = display(prefix)
+            return (prefixMods + prefixKey, mods + key)
+        }
+        return (mods, key)
+    }
+
+    static func symbol(_ key: String) -> String { keyNames[key] ?? key.uppercased() }
+}
+
+// ponytail: always ~/.config/herdr/config.toml; honour XDG_CONFIG_HOME if herdr ever reads it from elsewhere for me
+let herdrConfig = NSHomeDirectory() + "/.config/herdr/config.toml"
 
 func run(_ args: [String], exe: String = herdr) -> (ok: Bool, out: Data, err: String) {
     let p = Process(), out = Pipe(), err = Pipe()
@@ -116,7 +197,7 @@ func bringTerminalForward() {
 
 // Icon, title, then keybind right-aligned in grey, like Rectangle.
 // The icon lives inside the title text: macOS hides NSMenuItem.image for this app, bundled or not.
-func label(_ title: String, icon: String, keys: String, tint: NSColor? = nil) -> NSAttributedString {
+func label(_ title: String, icon: String, keys: (String, String) = ("", ""), tint: NSColor? = nil) -> NSAttributedString {
     let font = NSFont.menuFont(ofSize: 0)
     let para = NSMutableParagraphStyle()
     // icon | title | prefix (right-aligned) | key (left-aligned), so "⌃B" and the keys each form a straight column
@@ -136,8 +217,7 @@ func label(_ title: String, icon: String, keys: String, tint: NSColor? = nil) ->
     let s = NSMutableAttributedString(attachment: att)
     s.addAttributes(attrs, range: NSRange(location: 0, length: s.length))
     s.append(NSAttributedString(string: "\t" + title, attributes: attrs))
-    let (prefix, key) = keys.isEmpty ? ("", "") : (String(keys.prefix(2)), String(keys.dropFirst(3)))
-    s.append(NSAttributedString(string: "\t\(prefix)\t\(key)", attributes: attrs.merging([.foregroundColor: NSColor.secondaryLabelColor]) { $1 }))
+    s.append(NSAttributedString(string: "\t\(keys.0)\t\(keys.1)", attributes: attrs.merging([.foregroundColor: NSColor.secondaryLabelColor]) { $1 }))
     return s
 }
 
@@ -178,6 +258,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var icon = NSImage(), notched = NSImage()
     let dot = NSView()
+    var keybinds = Keybinds(toml: "")
 
     // The status badge: a 7pt dot in an 11pt notch cut from the icon's bottom-right corner.
     // The icon stays a template image (macOS tints it for light/dark); only the dot is coloured.
@@ -234,6 +315,8 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Agents / Pane (named after the focused pane) / Tab / Workspace / Quit
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        // Demo screenshots use herdr's defaults; otherwise reread my config so edits show up straight away
+        keybinds = Keybinds(toml: demo ? "" : (try? String(contentsOfFile: herdrConfig, encoding: .utf8)) ?? "")
         let snap = demo ? demoSnapshot : result(["api", "snapshot"])?["snapshot"] as? [String: Any]
 
         let workspaces = snap?["workspaces"] as? [[String: Any]] ?? []
@@ -259,7 +342,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         paneActions.forEach { menu.addItem(item($0)) }
         for sub in paneSubmenus {
             let mi = NSMenuItem(title: sub.title, action: nil, keyEquivalent: "")
-            mi.attributedTitle = label(sub.title, icon: sub.icon, keys: "")
+            mi.attributedTitle = label(sub.title, icon: sub.icon)
             mi.submenu = NSMenu()
             sub.actions.forEach { mi.submenu?.addItem(item($0)) }
             menu.addItem(mi)
@@ -280,18 +363,18 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         let login = NSMenuItem(title: "Launch at login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        login.attributedTitle = label("Launch at login", icon: "sunrise", keys: "")
+        login.attributedTitle = label("Launch at login", icon: "sunrise")
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         login.target = self
         menu.addItem(login)
         let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate), keyEquivalent: "")
-        quit.attributedTitle = label("Quit", icon: "power", keys: "")
+        quit.attributedTitle = label("Quit", icon: "power")
         menu.addItem(quit)
     }
 
     func item(_ a: Action) -> NSMenuItem {
         let mi = NSMenuItem(title: a.title, action: #selector(click), keyEquivalent: "")
-        mi.attributedTitle = label(a.title, icon: a.icon, keys: a.keys)
+        mi.attributedTitle = label(a.title, icon: a.icon, keys: keybinds.keys(for: a.action))
         mi.representedObject = a.args
         mi.target = self
         return mi
@@ -301,7 +384,7 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func listRow(_ title: String, detail: String, from info: [String: Any], args: [String]) -> NSMenuItem {
         let (icon, tint) = statusIcons[info["agent_status"] as? String ?? ""] ?? unknownIcon
         let name = short(title, 26) // keeps the detail column straight
-        let text = NSMutableAttributedString(attributedString: label(name, icon: icon, keys: "", tint: tint))
+        let text = NSMutableAttributedString(attributedString: label(name, icon: icon, tint: tint))
         text.append(NSAttributedString(string: short(detail, 30),
                                        attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
         let mi = NSMenuItem(title: name, action: #selector(click), keyEquivalent: "")
@@ -406,6 +489,24 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(!isHerdrClient("herdr session list"))
     precondition(!isHerdrClient("/path/herdr-bar --watch-titles 3"))
     precondition(!isHerdrClient("vim herdr"))
+    let k = Keybinds(toml: """
+    [keys]
+    prefix = "ctrl+a"  # a comment
+    new_tab = ["prefix+t", "ctrl+alt+t"]
+    close_tab = ""
+    resize_pane_left = "ctrl+shift+alt+left"
+    [[keys.command]]
+    key = "prefix+k"
+    command = "echo #not-a-key"
+    """)
+    precondition(k.keys(for: "new_tab") == ("⌃A", "T")) // first of a list, my prefix
+    precondition(k.keys(for: "close_tab") == ("", "")) // "" unbinds
+    precondition(k.keys(for: "focus_pane_up") == ("", "")) // default taken by a custom command
+    precondition(k.keys(for: "split_horizontal") == ("⌃A", "−")) // default, my prefix, named key
+    precondition(k.keys(for: "swap_pane_left") == ("⌃A", "⇧H"))
+    precondition(k.keys(for: "resize_pane_left") == ("⌃⌥⇧", "←")) // direct binding
+    precondition(k.keys(for: "resize_pane_up") == ("⌃A", "R ↑")) // resize mode fallback
+    precondition(Keybinds(toml: "").keys(for: "new_workspace") == ("⌃B", "⇧N"))
     print("self-test ok")
     exit(0)
 }
