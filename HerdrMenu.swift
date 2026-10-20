@@ -325,7 +325,11 @@ enum Setting {
     static let show = "show", machines = "machines"
     static let showChoices: [(value: String, title: String)] = [(value: "both", title: "Agents and workspaces"), ("agents", "Agents only"), ("workspaces", "Workspaces only")]
     static let machineChoices: [(value: String, title: String)] = [(value: "all", title: "All together"), ("one", "One at a time")]
+    // Which action sections show, each "on" (default) or "off": actions.workspace, actions.tab, actions.pane
+    static let sections = [("workspace", "Workspace actions"), ("tab", "Tab actions"), ("pane", "Pane actions")]
+    static func section(_ kind: String) -> String { "actions." + kind }
     static let defaults = [show: showChoices[0].value, machines: machineChoices[0].value]
+        .merging(sections.map { (section($0.0), "on") }) { $1 }
 }
 
 func setting(_ key: String) -> String {
@@ -468,34 +472,52 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let n = names(snap)
         let pane = snap?.panes.first { $0.focused == true }
         let on = shown.count > 1 ? " (\(target.name))" : ""
-        menu.addItem(header("Workspace", pane.flatMap { n[$0.workspaceId] }.map { $0 + on }))
-        // Workspace rows for every machine shown, the machine in grey when there are several
-        for (m, snap) in zip(shown, snaps) where list != "agents" {
-            for w in snap?.workspaces ?? [] {
-                menu.addItem(listRow(w.label, detail: shown.count > 1 ? m.name : "", status: w.agentStatus, focused: w.focused,
-                                     command: Command(machine: m, args: ["workspace", "focus", w.workspaceId])))
+        // Each section's actions can be turned off; the workspace list (Show) stays under its header regardless
+        let workspaceRows = list != "agents", sectionOn = { setting(Setting.section($0)) == "on" }
+        if workspaceRows || sectionOn("workspace") {
+            menu.addItem(header("Workspace", pane.flatMap { n[$0.workspaceId] }.map { $0 + on }))
+            // Workspace rows for every machine shown, the machine in grey when there are several
+            for (m, snap) in zip(shown, snaps) where workspaceRows {
+                for w in snap?.workspaces ?? [] {
+                    menu.addItem(listRow(w.label, detail: shown.count > 1 ? m.name : "", status: w.agentStatus, focused: w.focused,
+                                         command: Command(machine: m, args: ["workspace", "focus", w.workspaceId])))
+                }
             }
+            if sectionOn("workspace") { add(workspaceActions, to: menu, on: target) }
+            menu.addItem(.separator())
         }
-        add(workspaceActions, to: menu, on: target)
-        menu.addItem(.separator())
 
-        menu.addItem(header("Tab", pane.flatMap { n[$0.tabId] }.map { $0 + on }))
-        add(tabActions, to: menu, on: target)
-        menu.addItem(.separator())
-
-        menu.addItem(header("Pane", pane.map { displayName($0) + on }))
-        add(paneActions, to: menu, on: target)
-        for sub in paneSubmenus {
-            let mi = menuItem(sub.title, icon: sub.icon, action: nil)
-            mi.submenu = NSMenu()
-            sub.actions.forEach { mi.submenu?.addItem(item($0, on: target)) }
-            menu.addItem(mi)
+        if sectionOn("tab") {
+            menu.addItem(header("Tab", pane.flatMap { n[$0.tabId] }.map { $0 + on }))
+            add(tabActions, to: menu, on: target)
+            menu.addItem(.separator())
         }
-        menu.addItem(item(closePane, on: target))
-        menu.addItem(.separator())
+
+        if sectionOn("pane") {
+            menu.addItem(header("Pane", pane.map { displayName($0) + on }))
+            add(paneActions, to: menu, on: target)
+            for sub in paneSubmenus {
+                let mi = menuItem(sub.title, icon: sub.icon, action: nil)
+                mi.submenu = NSMenu()
+                sub.actions.forEach { mi.submenu?.addItem(item($0, on: target)) }
+                menu.addItem(mi)
+            }
+            menu.addItem(item(closePane, on: target))
+            menu.addItem(.separator())
+        }
 
         // Settings, kept in UserDefaults; Machines only matters with saved SSH machines
         menu.addItem(settingMenu("Show", icon: "list.bullet", key: Setting.show, choices: Setting.showChoices))
+        let actions = menuItem("Actions", icon: "slider.horizontal.3", action: nil)
+        actions.submenu = NSMenu()
+        for (kind, title) in Setting.sections {
+            let row = NSMenuItem(title: title, action: #selector(toggleSection(_:)), keyEquivalent: "")
+            row.target = self
+            row.representedObject = kind
+            row.state = setting(Setting.section(kind)) == "on" ? .on : .off
+            actions.submenu?.addItem(row)
+        }
+        menu.addItem(actions)
         if multi {
             menu.addItem(settingMenu("Machines", icon: "server.rack", key: Setting.machines, choices: Setting.machineChoices))
         }
@@ -574,6 +596,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             mi.submenu?.addItem(row)
         }
         return mi
+    }
+
+    @objc func toggleSection(_ sender: NSMenuItem) {
+        guard let kind = sender.representedObject as? String else { return }
+        let key = Setting.section(kind)
+        UserDefaults.standard.set(setting(key) == "on" ? "off" : "on", forKey: key)
     }
 
     @objc func choose(_ sender: NSMenuItem) {

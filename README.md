@@ -49,9 +49,10 @@ Clicking a remote agent moves focus on that machine's server. You only see it if
 ### Settings
 
 - **Show**: agents and workspaces (default), agents only, or workspaces only.
+- **Actions**: turn the Workspace, Tab and Pane action sections on or off (all on by default). The workspace list from **Show** stays either way.
 - **Machines**: all together or one at a time (only with saved SSH machines).
 
-Both are stored in the app's defaults, e.g. `defaults write dev.pierre-charles.herdr-menu show agents`.
+These are stored in the app's defaults, e.g. `defaults write dev.pierre-charles.herdr-menu show agents` or `defaults write dev.pierre-charles.herdr-menu actions.pane off`.
 
 ## Requirements
 
