@@ -11,11 +11,9 @@ let herdr = [NSHomeDirectory() + "/.local/bin/herdr", "/opt/homebrew/bin/herdr",
 // "{pane}", "{tab}", "{workspace}" become the focused ids at click time; "{label}" prompts for a name.
 typealias Action = (title: String, icon: String, binding: String, args: [String])
 
-let dirs = ["left", "right", "up", "down"]
-
 // The rows of a "Focus ›" style submenu, one per direction; herdr names the actions focus_pane_left etc.
 func directionRows(_ verb: String, icons: [String]) -> [Action] {
-    dirs.indices.map { (dirs[$0].capitalized, icons[$0], "\(verb)_pane_\(dirs[$0])", ["pane", verb, "--direction", dirs[$0]]) }
+    zip(["left", "right", "up", "down"], icons).map { dir, icon in (dir.capitalized, icon, "\(verb)_pane_\(dir)", ["pane", verb, "--direction", dir]) }
 }
 
 let paneActions: [Action] = [
@@ -41,12 +39,6 @@ let workspaceActions: [Action] = [
     ("New workspace…", "macwindow.badge.plus", "new_workspace", ["workspace", "create", "--label", "{label}", "--focus"]),
     ("Rename workspace", "square.and.pencil", "rename_workspace", ["workspace", "rename", "{workspace}", "{label}"]),
     ("Close workspace", "rectangle.badge.xmark", "close_workspace", ["workspace", "close", "{workspace}"]),
-]
-// "New tab…" and "New workspace…" ask for a name first (an empty name falls back to herdr's).
-// Holding ⌥ swaps each for this quick version, which creates straight away like herdr's own keybind.
-let quickCreate: [String: Action] = [
-    "new_tab": ("New tab", "plus.rectangle.on.rectangle", "new_tab", ["tab", "create", "--focus"]),
-    "new_workspace": ("New workspace", "macwindow.badge.plus", "new_workspace", ["workspace", "create", "--focus"]),
 ]
 
 // MARK: - Keybinds
@@ -404,12 +396,13 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menuItem(a.title, icon: a.icon, keys: keybinds.keys(for: a.binding), args: a.args)
     }
 
-    // Each action's row, followed by its ⌥ alternate if it has one (macOS shows it in place while ⌥ is held)
+    // Each action's row. "New tab…" and "New workspace…" ask for a name first; holding ⌥ swaps each for a
+    // quick version without the "…" or the name prompt, which creates straight away like herdr's own keybind.
     func add(_ actions: [Action], to menu: NSMenu) {
         for a in actions {
             menu.addItem(item(a))
-            if let quick = quickCreate[a.binding] {
-                let alt = item(quick)
+            if a.title.hasSuffix("…") {
+                let alt = item((String(a.title.dropLast()), a.icon, a.binding, a.args.filter { $0 != "--label" && $0 != "{label}" }))
                 alt.isAlternate = true
                 alt.keyEquivalentModifierMask = .option
                 menu.addItem(alt)
