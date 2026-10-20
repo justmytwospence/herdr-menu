@@ -1,8 +1,10 @@
 #!/bin/sh
-# Builds HerdrMenu.app next to this script.
+# Builds and signs HerdrMenu.app into ~/Applications, where Spotlight finds it
+# and where the "Launch at login" item points.
 set -e
 cd "$(dirname "$0")"
-app=HerdrMenu.app/Contents
+bundle="$HOME/Applications/HerdrMenu.app"
+app="$bundle/Contents"
 mkdir -p "$app/MacOS" "$app/Resources"
 swiftc HerdrMenu.swift -o "$app/MacOS/HerdrMenu"
 cp sheep.png "$app/Resources/"
@@ -27,3 +29,6 @@ cat > "$app/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
 </dict></plist>
 PLIST
+# Ad-hoc signature over the whole bundle (no developer account needed); macOS login items check it
+codesign --force --sign - "$bundle"
+echo "Built $bundle"

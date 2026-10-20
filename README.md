@@ -1,21 +1,48 @@
 # HerdrMenu
 
-A macOS menu bar app for [herdr](https://herdr.dev), in the style of Rectangle. Click to split, focus, resize, swap, zoom or close panes, or to open tabs and workspaces. Each item shows herdr's default keybind, so the menu doubles as a cheat sheet.
+A macOS menu bar app for [herdr](https://herdr.dev), in the style of Rectangle.
 
-It runs the `herdr` CLI (`~/.local/bin/herdr`) rather than faking keystrokes, so it acts on the focused pane and doesn't need Accessibility permission.
+- **Agents** at the top of the menu, with herdr's status dots. Click one to jump to it.
+- **A badge on the sheep** when an agent needs you: red when one is blocked, teal when one has finished and you haven't looked yet.
+- **One-click actions** for panes (split, zoom, focus, resize, swap, close), tabs and workspaces (new, rename, close), plus a list of your workspaces to jump between.
+- **herdr's keybind next to each action,** so the menu doubles as a cheat sheet.
 
-## Build and run
+It calls the `herdr` CLI rather than faking keystrokes, so it acts on whichever pane you're looking at and doesn't need Accessibility permission. After a click, it brings your terminal to the front. The icon only appears while herdr is open.
+
+## Requirements
+
+- macOS 14 or later
+- The Xcode command line tools (`xcode-select --install`), for `swiftc`
+- herdr 0.9.1 or later, installed in `~/.local/bin` (herdr's install script), `/opt/homebrew/bin` or `/usr/local/bin`. If you've updated herdr, make sure the running server is the new version too: `herdr status` should show `server_binary_stale: no`.
+
+## Install
 
 ```sh
+git clone https://github.com/pierre-charles/herdr-menu.git
+cd herdr-menu
 ./build.sh
-open HerdrMenu.app
+open ~/Applications/HerdrMenu.app
 ```
 
-Needs the Xcode command line tools (`swiftc`).
+`build.sh` builds and signs the app into `~/Applications`. Then open herdr, click the sheep in the menu bar and tick **Launch at login** so it starts every time you log in. It's listed in System Settings → General → Login Items.
+
+## Update
+
+```sh
+git pull
+./build.sh
+```
+
+Then choose **Quit** from the menu and run `open ~/Applications/HerdrMenu.app` again.
+
+## Uninstall
+
+Untick **Launch at login**, choose **Quit**, then delete `~/Applications/HerdrMenu.app`.
 
 ## Notes
 
 - The keybinds shown are herdr's defaults (prefix `ctrl+b`). They aren't read from `config.toml`.
+- Status colours are herdr's Catppuccin palette, its default theme.
 - The app icon is herdr's logo (`logo.png`), and the menu bar icon is the same logo converted to a template image (`sheep.png`).
 
 ## Credits

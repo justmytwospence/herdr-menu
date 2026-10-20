@@ -1,6 +1,9 @@
 import AppKit
+import ServiceManagement
 
-let herdr = NSHomeDirectory() + "/.local/bin/herdr"
+// herdr's install script uses ~/.local/bin; Homebrew uses /opt/homebrew/bin (Apple silicon) or /usr/local/bin
+let herdr = [NSHomeDirectory() + "/.local/bin/herdr", "/opt/homebrew/bin/herdr", "/usr/local/bin/herdr"]
+    .first(where: FileManager.default.isExecutableFile) ?? "herdr"
 
 // (title, SF Symbol, herdr keybind, CLI args).
 // "{pane}", "{tab}", "{workspace}" become the focused ids at click time; "{label}" prompts for a name.
@@ -256,6 +259,11 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         workspaceActions.forEach { menu.addItem(item($0)) }
         menu.addItem(.separator())
 
+        let login = NSMenuItem(title: "Launch at login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        login.attributedTitle = label("Launch at login", icon: "sunrise", keys: "")
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        login.target = self
+        menu.addItem(login)
         let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate), keyEquivalent: "")
         quit.attributedTitle = label("Quit", icon: "power", keys: "")
         menu.addItem(quit)
@@ -282,6 +290,18 @@ class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mi.state = info["focused"] as? Bool == true ? .on : .off
         mi.target = self
         return mi
+    }
+
+    // A macOS login item (System Settings → General → Login Items), so the app starts at login.
+    // It stays hidden until a herdr client is open, like any other time.
+    @objc func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled { try service.unregister() } else { try service.register() }
+        } catch {
+            alert("Couldn't change Launch at login: \(error.localizedDescription)")
+        }
+        if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
     }
 
     @objc func click(_ sender: NSMenuItem) {
