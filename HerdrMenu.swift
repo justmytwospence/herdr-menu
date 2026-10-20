@@ -521,9 +521,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let login = menuItem("Launch at login", icon: "sunrise", action: #selector(toggleLaunchAtLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
-        let quit = menuItem("Quit", icon: "power", action: #selector(NSApplication.terminate))
-        quit.target = NSApp
-        menu.addItem(quit)
+        menu.addItem(menuItem("Quit", icon: "power", action: #selector(quit)))
     }
 
     // "Pane · dev": a section header naming the thing its actions act on
@@ -659,6 +657,10 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let r = run(m.cmd(args), timeout: m.id == nil ? nil : 10)
         if r.ok { bringTerminalForward() } else { alert(r.err.isEmpty ? "herdr \(m.cmd(args).joined(separator: " ")) failed" : r.err) }
     }
+
+    // Not NSApplication.terminate directly: macOS 26 gives that selector its own menu icon,
+    // which sits beside ours and indents the whole last section.
+    @objc func quit() { NSApp.terminate(nil) }
 
     // A two-button dialog (button / Cancel), optionally with a text field. True if the button was pressed.
     // Destructive: the button is drawn red and Return presses Cancel instead.
